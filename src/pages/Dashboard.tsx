@@ -1074,6 +1074,29 @@ const Dashboard = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
+      // Try to use the edge function first (if available)
+      try {
+        const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/activate-scheduled-posts`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          console.log('Edge function activated posts:', result);
+          // Refresh lists after edge function runs
+          await fetchEngagementPosts();
+          await fetchScheduledPosts();
+          return;
+        }
+      } catch (edgeFunctionError) {
+        console.log('Edge function not available, falling back to client-side check');
+      }
+
+      // Fallback to client-side check
       const { data: overduePosts, error } = await supabase
         .from('community_posts')
         .select('*')
@@ -1332,6 +1355,18 @@ const Dashboard = () => {
     }, 60000); // Check every minute
 
     return () => clearInterval(timer);
+  }, [checkAndActivateScheduledPosts]);
+
+  // Also check when the page becomes visible (user returns to tab)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        checkAndActivateScheduledPosts();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [checkAndActivateScheduledPosts]);
 
   // Real-time countdown timer (updates every second when viewing scheduled posts)
