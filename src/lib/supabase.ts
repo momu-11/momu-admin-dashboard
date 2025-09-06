@@ -84,6 +84,10 @@ export interface CommunityPost {
   tags: string[] | null
   like_count: number | null
   comment_count: number | null
+  display_username: string | null
+  display_avatar_color: string | null
+  status: 'active' | 'scheduled' | null
+  scheduled_at: string | null
   created_at: string
   updated_at: string
   avatar_color: string | null
@@ -95,6 +99,8 @@ export interface CommunityComment {
   author_id: string
   content: string
   like_count: number | null
+  display_username: string | null
+  display_avatar_color: string | null
   created_at: string
   updated_at: string
   avatar_color: string | null

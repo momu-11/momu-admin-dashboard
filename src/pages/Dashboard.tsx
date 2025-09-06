@@ -203,6 +203,20 @@ const Dashboard = () => {
   });
   const [creatingEngagementComment, setCreatingEngagementComment] = useState<boolean>(false);
   
+  // Engagement Comments Tab state
+  const [allPosts, setAllPosts] = useState<any[]>([]);
+  const [allPostsLoading, setAllPostsLoading] = useState<boolean>(false);
+  const [postFilter, setPostFilter] = useState<'all' | 'engagement'>('all');
+  const [selectedPostForCommenting, setSelectedPostForCommenting] = useState<any>(null);
+  const [commentModalOpen, setCommentModalOpen] = useState<boolean>(false);
+  const [newComment, setNewComment] = useState({
+    content: '',
+    username: '',
+    avatarColor: '#CBB3FF',
+    likeCount: 0
+  });
+  const [creatingComment, setCreatingComment] = useState<boolean>(false);
+  
   // Support request modal state
   const [selectedSupportRequest, setSelectedSupportRequest] = useState<any>(null);
   const [supportRequestModalOpen, setSupportRequestModalOpen] = useState<boolean>(false);
@@ -1271,6 +1285,107 @@ const Dashboard = () => {
     }
   };
 
+  // Engagement Comments Tab Functions
+  const fetchAllPosts = useCallback(async () => {
+    setAllPostsLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      let query = supabase
+        .from('community_posts')
+        .select('*')
+        .eq('status', 'active')
+        .order('created_at', { ascending: false });
+
+      if (postFilter === 'engagement') {
+        query = query
+          .eq('author_id', user.id)
+          .not('display_username', 'is', null);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error('Error fetching all posts:', error);
+        return;
+      }
+
+      setAllPosts(data || []);
+    } catch (error) {
+      console.error('Error in fetchAllPosts:', error);
+    } finally {
+      setAllPostsLoading(false);
+    }
+  }, [postFilter]);
+
+  const handleOpenCommentModal = async (post: any) => {
+    setSelectedPostForCommenting(post);
+    setCommentModalOpen(true);
+    await fetchPostComments(post.id);
+  };
+
+  const handleCloseCommentModal = () => {
+    setCommentModalOpen(false);
+    setSelectedPostForCommenting(null);
+    setPostComments([]);
+    setNewComment({
+      content: '',
+      username: '',
+      avatarColor: '#CBB3FF',
+      likeCount: 0
+    });
+  };
+
+  const handleCreateComment = async () => {
+    if (!newComment.content || !newComment.username || !selectedPostForCommenting) {
+      alert('Please fill in all required fields');
+      return;
+    }
+
+    setCreatingComment(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from('community_comments')
+        .insert({
+          post_id: selectedPostForCommenting.id,
+          author_id: user.id,
+          content: newComment.content,
+          display_username: newComment.username,
+          display_avatar_color: newComment.avatarColor,
+          like_count: newComment.likeCount
+        })
+        .select();
+
+      if (error) {
+        console.error('Error creating comment:', error);
+        alert('Failed to create comment');
+        return;
+      }
+
+      // Reset form
+      setNewComment({
+        content: '',
+        username: '',
+        avatarColor: '#CBB3FF',
+        likeCount: 0
+      });
+
+      // Refresh comments
+      await fetchPostComments(selectedPostForCommenting.id);
+      
+      alert('Comment created successfully!');
+    } catch (error) {
+      console.error('Error in handleCreateComment:', error);
+      alert('Failed to create comment');
+    } finally {
+      setCreatingComment(false);
+    }
+  };
+
   const [dbConnectionStatus, setDbConnectionStatus] = useState<{
     checking: boolean;
     connected: boolean;
@@ -1368,6 +1483,13 @@ const Dashboard = () => {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [checkAndActivateScheduledPosts]);
+
+  // Fetch all posts when engagement comments tab is accessed or filter changes
+  useEffect(() => {
+    if (currentTab === 7) { // Engagement Comments tab
+      fetchAllPosts();
+    }
+  }, [currentTab, postFilter, fetchAllPosts]);
 
   // Real-time countdown timer (updates every second when viewing scheduled posts)
   useEffect(() => {
@@ -2547,6 +2669,128 @@ const Dashboard = () => {
       );
     };
 
+    const renderEngagementComments = () => {
+      return (
+        <Box>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Typography variant="h4" sx={{ color: '#ffffff', fontWeight: 'bold' }}>
+              Engagement Comments Management
+            </Typography>
+            <Button
+              variant={postFilter === 'engagement' ? "contained" : "outlined"}
+              onClick={() => setPostFilter(postFilter === 'all' ? 'engagement' : 'all')}
+              sx={{
+                color: postFilter === 'engagement' ? '#000000' : '#CBB3FF',
+                backgroundColor: postFilter === 'engagement' ? '#CBB3FF' : 'transparent',
+                borderColor: '#CBB3FF',
+                '&:hover': {
+                  borderColor: '#A9E5BB',
+                  backgroundColor: postFilter === 'engagement' ? '#A9E5BB' : 'rgba(203, 179, 255, 0.1)',
+                },
+              }}
+            >
+              {postFilter === 'all' ? 'Show All Posts' : 'Show Engagement Posts Only'}
+            </Button>
+          </Box>
+          
+          <Paper sx={{ backgroundColor: '#1a1a1a', p: 3 }}>
+            <Typography variant="h6" sx={{ color: '#ffffff', mb: 2 }}>
+              Posts Feed - Click any post to add comments
+            </Typography>
+            
+            {allPostsLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress color="primary" />
+              </Box>
+            ) : allPosts.length === 0 ? (
+              <Typography variant="body1" sx={{ color: '#cccccc', textAlign: 'center', py: 4 }}>
+                No posts found. {postFilter === 'engagement' ? 'Try switching to "All Posts" or create some engagement posts first.' : ''}
+              </Typography>
+            ) : (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {allPosts.map((post) => (
+                  <Paper 
+                    key={post.id}
+                    onClick={() => handleOpenCommentModal(post)}
+                    sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      p: 3, 
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      '&:hover': {
+                        backgroundColor: '#333333',
+                        transform: 'translateY(-2px)',
+                        boxShadow: '0 4px 12px rgba(203, 179, 255, 0.2)',
+                      },
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                      <Avatar
+                        sx={{
+                          bgcolor: post.display_avatar_color || post.avatar_color || '#CBB3FF',
+                          width: 40,
+                          height: 40,
+                          mr: 2,
+                        }}
+                      >
+                        {(post.display_username || post.username || 'U').charAt(0).toUpperCase()}
+                      </Avatar>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography 
+                          variant="subtitle1" 
+                          sx={{ 
+                            color: post.display_avatar_color || post.avatar_color || '#ffffff', 
+                            fontWeight: 'bold' 
+                          }}
+                        >
+                          @{post.display_username || post.username || 'Unknown'}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#cccccc' }}>
+                          {new Date(post.created_at).toLocaleDateString('en-US', { 
+                            month: 'short', 
+                            day: 'numeric', 
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })} • {post.like_count || 0} likes • {post.comment_count || 0} comments
+                        </Typography>
+                      </Box>
+                      {post.display_username && (
+                        <Chip
+                          label="Engagement Post"
+                          size="small"
+                          sx={{
+                            backgroundColor: 'rgba(203, 179, 255, 0.2)',
+                            color: '#CBB3FF',
+                            fontSize: '0.7rem'
+                          }}
+                        />
+                      )}
+                    </Box>
+                    <Typography variant="body1" sx={{ color: '#ffffff', ml: 7 }}>
+                      {post.content}
+                    </Typography>
+                    <Box sx={{ ml: 7, mt: 2, display: 'flex', alignItems: 'center' }}>
+                      <Typography variant="caption" sx={{ 
+                        color: '#CBB3FF', 
+                        backgroundColor: 'rgba(203, 179, 255, 0.1)',
+                        px: 1,
+                        py: 0.5,
+                        borderRadius: 1,
+                        fontSize: '0.7rem'
+                      }}>
+                        💬 Click to view/add comments
+                      </Typography>
+                    </Box>
+                  </Paper>
+                ))}
+              </Box>
+            )}
+          </Paper>
+        </Box>
+      );
+    };
+
     return (
       <Box sx={{ width: '100%' }}>
         <Box sx={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)', mb: 2 }}>
@@ -2572,6 +2816,7 @@ const Dashboard = () => {
             <Tab label="Referral" />
             <Tab label={`Banned (${bannedUsers.length})`} />
             <Tab label={`Engagement Posts (${engagementPosts.length})`} />
+            <Tab label={`Engagement Comments (${allPosts.length})`} />
           </Tabs>
         </Box>
         
@@ -2583,6 +2828,7 @@ const Dashboard = () => {
           {currentTab === 4 && renderReferral()}
           {currentTab === 5 && renderBannedUsers()}
           {currentTab === 6 && renderEngagementPosts()}
+          {currentTab === 7 && renderEngagementComments()}
         </Box>
       </Box>
     );
@@ -4612,6 +4858,279 @@ const Dashboard = () => {
                           }}
                         >
                           <DeleteIcon />
+                        </IconButton>
+                      )}
+                    </Box>
+                  </Paper>
+                ))}
+              </Box>
+            )}
+          </Paper>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Comment Modal for Engagement Comments Tab */}
+      <Dialog 
+        open={commentModalOpen}
+        onClose={handleCloseCommentModal}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{
+          sx: {
+            backgroundColor: '#1a1a1a',
+            color: '#ffffff',
+            minHeight: '600px'
+          }
+        }}
+      >
+        <DialogTitle sx={{ 
+          backgroundColor: '#2a2a2a', 
+          color: '#ffffff', 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          borderBottom: '1px solid #444444'
+        }}>
+          <Typography variant="h6">
+            Comments for Post by @{selectedPostForCommenting?.display_username || selectedPostForCommenting?.username || 'Unknown'}
+          </Typography>
+          <IconButton onClick={handleCloseCommentModal} sx={{ color: '#ffffff' }}>
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        
+        <DialogContent sx={{ backgroundColor: '#1a1a1a', p: 3 }}>
+          {/* Post Preview */}
+          <Paper sx={{ backgroundColor: '#2a2a2a', p: 3, mb: 3 }}>
+            <Typography variant="h6" sx={{ color: '#ffffff', mb: 2 }}>
+              Original Post
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <Avatar
+                sx={{
+                  bgcolor: selectedPostForCommenting?.display_avatar_color || selectedPostForCommenting?.avatar_color || '#CBB3FF',
+                  width: 40,
+                  height: 40,
+                  mr: 2,
+                }}
+              >
+                {(selectedPostForCommenting?.display_username || selectedPostForCommenting?.username || 'U').charAt(0).toUpperCase()}
+              </Avatar>
+              <Box>
+                <Typography 
+                  variant="subtitle1" 
+                  sx={{ 
+                    color: selectedPostForCommenting?.display_avatar_color || selectedPostForCommenting?.avatar_color || '#ffffff', 
+                    fontWeight: 'bold' 
+                  }}
+                >
+                  @{selectedPostForCommenting?.display_username || selectedPostForCommenting?.username || 'Unknown'}
+                </Typography>
+                <Typography variant="caption" sx={{ color: '#cccccc' }}>
+                  {selectedPostForCommenting && new Date(selectedPostForCommenting.created_at).toLocaleDateString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })} • {selectedPostForCommenting?.like_count || 0} likes
+                </Typography>
+              </Box>
+            </Box>
+            <Typography variant="body1" sx={{ color: '#ffffff', ml: 7 }}>
+              {selectedPostForCommenting?.content}
+            </Typography>
+          </Paper>
+
+          {/* Add New Comment Form */}
+          <Paper sx={{ backgroundColor: '#2a2a2a', p: 3, mb: 3 }}>
+            <Typography variant="h6" sx={{ color: '#ffffff', mb: 2 }}>
+              Add New Comment
+            </Typography>
+            
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                fullWidth
+                label="Username"
+                value={newComment.username}
+                onChange={(e) => setNewComment(prev => ({ ...prev, username: e.target.value }))}
+                placeholder="e.g., CommunityBot"
+                sx={{
+                  '& .MuiInputBase-root': {
+                    color: '#ffffff',
+                    backgroundColor: '#333333',
+                  },
+                  '& .MuiInputLabel-root': {
+                    color: '#cccccc',
+                  },
+                  '& .MuiOutlinedInput-notchedOutline': {
+                    borderColor: '#555555',
+                  },
+                }}
+              />
+              
+              <TextField
+                fullWidth
+                multiline
+                rows={3}
+                label="Comment Content"
+                value={newComment.content}
+                onChange={(e) => setNewComment(prev => ({ ...prev, content: e.target.value }))}
+                placeholder="Write your comment here..."
+                sx={{
+                  '& .MuiInputBase-root': {
+                    color: '#ffffff',
+                    backgroundColor: '#333333',
+                  },
+                  '& .MuiInputLabel-root': {
+                    color: '#cccccc',
+                  },
+                  '& .MuiOutlinedInput-notchedOutline': {
+                    borderColor: '#555555',
+                  },
+                }}
+              />
+              
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                <FormControl sx={{ width: '200px' }}>
+                  <Typography variant="body2" sx={{ color: '#cccccc', mb: 1 }}>
+                    Avatar Color
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    {['#A9E5BB', '#FFB385', '#CBB3FF', '#B3E5FC'].map((color) => (
+                      <Box
+                        key={color}
+                        onClick={() => setNewComment(prev => ({ ...prev, avatarColor: color }))}
+                        sx={{
+                          width: 40,
+                          height: 40,
+                          backgroundColor: color,
+                          borderRadius: '50%',
+                          cursor: 'pointer',
+                          border: newComment.avatarColor === color ? '3px solid #ffffff' : '2px solid #555555',
+                          transition: 'all 0.2s',
+                          '&:hover': {
+                            transform: 'scale(1.1)',
+                            borderColor: '#ffffff',
+                          },
+                        }}
+                      />
+                    ))}
+                  </Box>
+                </FormControl>
+                
+                <TextField
+                  label="Initial Like Count"
+                  type="number"
+                  value={newComment.likeCount}
+                  onChange={(e) => setNewComment(prev => ({ ...prev, likeCount: parseInt(e.target.value) || 0 }))}
+                  inputProps={{ min: 0 }}
+                  sx={{
+                    width: '180px',
+                    '& .MuiInputBase-root': {
+                      color: '#ffffff',
+                      backgroundColor: '#333333',
+                    },
+                    '& .MuiInputLabel-root': {
+                      color: '#cccccc',
+                    },
+                    '& .MuiOutlinedInput-notchedOutline': {
+                      borderColor: '#555555',
+                    },
+                  }}
+                />
+              </Box>
+              
+              <Button
+                variant="contained"
+                onClick={handleCreateComment}
+                disabled={creatingComment || !newComment.content || !newComment.username}
+                sx={{
+                  backgroundColor: '#CBB3FF',
+                  color: '#000000',
+                  fontWeight: 'bold',
+                  '&:hover': {
+                    backgroundColor: '#A9E5BB',
+                  },
+                  '&:disabled': {
+                    backgroundColor: '#666666',
+                    color: '#999999',
+                  },
+                }}
+              >
+                {creatingComment ? 'Creating...' : 'Add Comment'}
+              </Button>
+            </Box>
+          </Paper>
+          
+          {/* Existing Comments List */}
+          <Paper sx={{ backgroundColor: '#2a2a2a', p: 3 }}>
+            <Typography variant="h6" sx={{ color: '#ffffff', mb: 2 }}>
+              All Comments ({postComments.length})
+            </Typography>
+            
+            {postCommentsLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress sx={{ color: '#CBB3FF' }} />
+              </Box>
+            ) : postComments.length === 0 ? (
+              <Typography variant="body1" sx={{ color: '#cccccc', textAlign: 'center', py: 4 }}>
+                No comments on this post yet.
+              </Typography>
+            ) : (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: '400px', overflowY: 'auto' }}>
+                {postComments.map((comment) => (
+                  <Paper key={comment.id} sx={{ backgroundColor: '#333333', p: 2 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <Box sx={{ flex: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                          <Avatar
+                            sx={{
+                              bgcolor: comment.display_avatar_color || comment.avatar_color || '#CBB3FF',
+                              width: 28,
+                              height: 28,
+                              mr: 2,
+                              fontSize: '0.8rem'
+                            }}
+                          >
+                            {(comment.display_username || comment.username || 'U').charAt(0).toUpperCase()}
+                          </Avatar>
+                          <Box>
+                            <Typography 
+                              variant="subtitle2" 
+                              sx={{ 
+                                color: comment.display_avatar_color || comment.avatar_color || '#ffffff', 
+                                fontWeight: 'bold' 
+                              }}
+                            >
+                              @{comment.display_username || comment.username || 'Unknown'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#cccccc' }}>
+                              {new Date(comment.created_at).toLocaleDateString('en-US', { 
+                                month: 'short', 
+                                day: 'numeric', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })} • {comment.like_count || 0} likes
+                            </Typography>
+                          </Box>
+                        </Box>
+                        <Typography variant="body2" sx={{ color: '#ffffff', ml: 5 }}>
+                          {comment.content}
+                        </Typography>
+                      </Box>
+                      {comment.display_username && (
+                        <IconButton
+                          onClick={() => handleDeleteEngagementComment(comment.id)}
+                          sx={{ 
+                            color: '#ff4444',
+                            '&:hover': {
+                              backgroundColor: 'rgba(255, 68, 68, 0.1)',
+                            },
+                          }}
+                        >
+                          <DeleteIcon fontSize="small" />
                         </IconButton>
                       )}
                     </Box>
