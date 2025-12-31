@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Box, Container, Paper, Alert, Typography, CircularProgress, Tabs, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button, AppBar, Toolbar, TextField, Card, CardContent, Avatar, Dialog, DialogTitle, DialogContent, IconButton, Pagination, Select, MenuItem, FormControl, ImageList, ImageListItem } from '@mui/material';
-import { Close as CloseIcon, Visibility as VisibilityIcon, CalendarToday as CalendarIcon, Delete as DeleteIcon } from '@mui/icons-material';
+import { Box, Container, Paper, Alert, Typography, CircularProgress, Tabs, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button, AppBar, Toolbar, TextField, Card, CardContent, Avatar, Dialog, DialogTitle, DialogContent, IconButton, Pagination, Select, MenuItem, FormControl, ImageList, ImageListItem, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Switch, FormControlLabel } from '@mui/material';
+import { Close as CloseIcon, Visibility as VisibilityIcon, CalendarToday as CalendarIcon, Delete as DeleteIcon, Menu as MenuIcon, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, People as PeopleIcon, AdminPanelSettings as AdminPanelSettingsIcon, Support as SupportIcon, Report as ReportIcon, CardGiftcard as CardGiftcardIcon, Block as BlockIcon, PostAdd as PostAddIcon, Comment as CommentIcon, Analytics as AnalyticsIcon } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { supabase, getUsers, getPlayers, getSupportRequests, getReports, getUserPosts, getUserComments, deletePost, deleteComment, sendNotification, getUserNotifications, updateSupportRequestStatus, updateReportStatus, deleteReport, getReferralCodes, getReferralRedemptions, deleteSupportRequest, getUserById, getBannedUsers, banUser, unbanUser } from '../lib/mockData';
+import { supabase, getUsers, getPlayers, getSupportRequests, getReports, getUserPosts, getUserComments, deletePost, deleteComment, sendNotification, getUserNotifications, updateSupportRequestStatus, updateReportStatus, deleteReport, getReferralCodes, getReferralRedemptions, deleteSupportRequest, getUserById, getBannedUsers, banUser, unbanUser, getOnboardingAnalytics } from '../lib/mockData';
 import { getSupportScreenshotUrl } from '../lib/supabase';
 
 // Screenshot Display Component
@@ -148,6 +148,7 @@ const ScreenshotDisplay = ({ screenshotPath }: { screenshotPath: string }) => {
 const Dashboard = () => {
   const { user, loading, logout } = useAuth();
   const [currentTab, setCurrentTab] = useState<number>(0);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [users, setUsers] = useState<any[]>([]);
   const [players, setPlayers] = useState<any[]>([]);
   const [supportRequests, setSupportRequests] = useState<any[]>([]);
@@ -195,6 +196,16 @@ const Dashboard = () => {
   const [commentsModalOpen, setCommentsModalOpen] = useState<boolean>(false);
   const [postComments, setPostComments] = useState<any[]>([]);
   const [postCommentsLoading, setPostCommentsLoading] = useState<boolean>(false);
+  
+  // iOS Update System state
+  const [iosUpdateSettings, setIosUpdateSettings] = useState<any>({
+    force_update_enabled: false,
+    custom_message: 'A new version of Momu is available. Please update to continue using the app.',
+    current_version: '1.0.6',
+    latest_version: '1.0.6'
+  });
+  const [iosUpdateLoading, setIosUpdateLoading] = useState<boolean>(false);
+  const [iosUpdateSaving, setIosUpdateSaving] = useState<boolean>(false);
   const [newEngagementComment, setNewEngagementComment] = useState({
     content: '',
     username: '',
@@ -257,6 +268,11 @@ const Dashboard = () => {
   const [unbanningUser, setUnbanningUser] = useState<boolean>(false);
   const [banType, setBanType] = useState<'permanent' | 'temporary'>('permanent');
   const [banUntil, setBanUntil] = useState<string>('');
+  
+  // Onboarding analytics state
+  const [onboardingAnalytics, setOnboardingAnalytics] = useState<any[]>([]);
+  const [onboardingAnalyticsLoading, setOnboardingAnalyticsLoading] = useState<boolean>(false);
+  const [useSandboxData, setUseSandboxData] = useState<boolean>(false);
   
   // Helper functions
   const generateUsername = (email: string) => {
@@ -1418,12 +1434,164 @@ const Dashboard = () => {
       
       // Also fetch referral codes for the referral tab
       await fetchReferralCodes();
+      
+      // Fetch onboarding analytics
+      await fetchOnboardingAnalytics();
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
       setDataLoading(false);
     }
   }, []);
+  
+  // Onboarding Analytics functions
+  const fetchOnboardingAnalytics = useCallback(async () => {
+    setOnboardingAnalyticsLoading(true);
+    try {
+      const { data, error } = await getOnboardingAnalytics();
+      if (error) {
+        console.error('Error fetching onboarding analytics:', error);
+      } else {
+        setOnboardingAnalytics(data || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch onboarding analytics:', error);
+    } finally {
+      setOnboardingAnalyticsLoading(false);
+    }
+  }, []);
+  
+  // iOS Update System functions
+  const fetchIosUpdateSettings = useCallback(async () => {
+    setIosUpdateLoading(true);
+    try {
+      console.log('Fetching iOS update settings...');
+      
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('*')
+        .eq('key', 'force_update_enabled')
+        .single();
+      
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No rows found - use default settings
+          console.log('No settings found, using defaults');
+          setIosUpdateSettings({
+            force_update_enabled: false,
+            custom_message: 'A new version of Momu is available. Please update to continue using the app.',
+            current_version: '1.0.6',
+            latest_version: '1.0.6'
+          });
+        } else {
+          console.error('Supabase error:', error);
+          throw error;
+        }
+      } else if (data) {
+        console.log('Settings found:', data);
+        const settings = data.value || {};
+        setIosUpdateSettings((prev: any) => ({
+          ...prev,
+          force_update_enabled: settings.enabled || false,
+          custom_message: settings.message || 'A new version of Momu is available. Please update to continue using the app.',
+          current_version: settings.current_version || '1.0.6'
+        }));
+      }
+      
+      // Fetch latest version from App Store
+      await fetchLatestAppStoreVersion();
+    } catch (error) {
+      console.error('Failed to fetch iOS update settings:', error);
+      // Set default settings on error
+      setIosUpdateSettings({
+        force_update_enabled: false,
+        custom_message: 'A new version of Momu is available. Please update to continue using the app.',
+        current_version: '1.0.6',
+        latest_version: '1.0.6'
+      });
+    } finally {
+      setIosUpdateLoading(false);
+    }
+  }, []);
+  
+  const fetchLatestAppStoreVersion = async () => {
+    try {
+      const response = await fetch('https://itunes.apple.com/lookup?id=6747963200');
+      const data = await response.json();
+      
+      if (data.results && data.results.length > 0) {
+        const latestVersion = data.results[0].version;
+        setIosUpdateSettings((prev: any) => ({
+          ...prev,
+          latest_version: latestVersion
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to fetch latest App Store version:', error);
+    }
+  };
+  
+  const saveIosUpdateSettings = async () => {
+    setIosUpdateSaving(true);
+    try {
+      const settingsData = {
+        enabled: iosUpdateSettings.force_update_enabled,
+        message: iosUpdateSettings.custom_message,
+        current_version: iosUpdateSettings.current_version,
+        latest_version: iosUpdateSettings.latest_version,
+        updated_at: new Date().toISOString()
+      };
+      
+      console.log('Saving iOS update settings:', settingsData);
+      
+      const { data, error } = await supabase
+        .from('app_settings')
+        .upsert({
+          key: 'force_update_enabled',
+          value: settingsData,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'key'
+        });
+      
+      if (error) {
+        console.error('Supabase error:', error);
+        throw error;
+      }
+      
+      console.log('iOS update settings saved successfully:', data);
+    } catch (error) {
+      console.error('Failed to save iOS update settings:', error);
+      // Show error to user
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to save settings: ${errorMessage}`);
+    } finally {
+      setIosUpdateSaving(false);
+    }
+  };
+  
+  const handleForceUpdateToggle = async () => {
+    const newSettings = {
+      ...iosUpdateSettings,
+      force_update_enabled: !iosUpdateSettings.force_update_enabled
+    };
+    setIosUpdateSettings(newSettings);
+    await saveIosUpdateSettings();
+  };
+  
+  const handleCustomMessageChange = (message: string) => {
+    setIosUpdateSettings((prev: any) => ({
+      ...prev,
+      custom_message: message
+    }));
+  };
+  
+  const handleCurrentVersionChange = (version: string) => {
+    setIosUpdateSettings((prev: any) => ({
+      ...prev,
+      current_version: version
+    }));
+  };
   
   // Check Supabase connection
   React.useEffect(() => {
@@ -1449,6 +1617,9 @@ const Dashboard = () => {
         await fetchEngagementPosts();
         await fetchScheduledPosts();
         
+        // Fetch iOS update settings
+        await fetchIosUpdateSettings();
+        
         console.log("Supabase connection successful");
       } catch (err: any) {
         console.error('Supabase connection error:', err);
@@ -1461,7 +1632,7 @@ const Dashboard = () => {
     };
     
     checkConnection();
-  }, [fetchAllData]);
+  }, [fetchAllData, fetchEngagementPosts, fetchScheduledPosts, fetchIosUpdateSettings]);
 
   // Timer to check scheduled posts every minute
   useEffect(() => {
@@ -1538,9 +1709,6 @@ const Dashboard = () => {
       );
     }
 
-    const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
-      setCurrentTab(newValue);
-    };
 
         const renderUsers = () => {
       const filteredUsers = users.filter(user => 
@@ -2791,33 +2959,330 @@ const Dashboard = () => {
       );
     };
 
+    const renderOnboardingAnalytics = () => {
+      // Dummy/sandbox data
+      const sandboxData = [
+        { step_name: 'welcome', views: 10000, completions: 9500, completion_rate: 95.0 },
+        { step_name: 'reason', views: 9500, completions: 9000, completion_rate: 94.7 },
+        { step_name: 'mood-check', views: 9000, completions: 8500, completion_rate: 94.4 },
+        { step_name: 'journaling-experience', views: 8500, completions: 8000, completion_rate: 94.1 },
+        { step_name: 'user-details', views: 8000, completions: 7500, completion_rate: 93.8 },
+        { step_name: 'solution', views: 7500, completions: 7000, completion_rate: 93.3 },
+        { step_name: 'chart', views: 7000, completions: 6500, completion_rate: 92.9 },
+        { step_name: 'goals', views: 6500, completions: 6000, completion_rate: 92.3 },
+        { step_name: 'time-preference', views: 6000, completions: 5500, completion_rate: 91.7 },
+        { step_name: 'testimonials', views: 5500, completions: 4800, completion_rate: 87.3 },
+        { step_name: 'referral', views: 4800, completions: 4200, completion_rate: 87.5 },
+        { step_name: 'outcome-preview', views: 4200, completions: 3800, completion_rate: 90.5 },
+        { step_name: 'paywall', views: 3800, completions: 2500, completion_rate: 65.8 },
+        { step_name: 'special-offer', views: 2500, completions: 2000, completion_rate: 80.0 },
+      ];
+
+      const displayData = useSandboxData ? sandboxData : onboardingAnalytics;
+      const isLoading = useSandboxData ? false : onboardingAnalyticsLoading;
+      const isEmpty = useSandboxData ? false : displayData.length === 0;
+
+      return (
+        <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
+          <Paper sx={{ backgroundColor: '#2a2a2a', p: 4, borderRadius: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+              <Typography variant="h5" sx={{ color: '#ffffff' }}>
+                Onboarding Analytics - User Drop-off Analysis
+              </Typography>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={useSandboxData}
+                    onChange={(e) => setUseSandboxData(e.target.checked)}
+                    sx={{
+                      '& .MuiSwitch-switchBase.Mui-checked': {
+                        color: '#A9E5BB',
+                      },
+                      '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+                        backgroundColor: '#A9E5BB',
+                      },
+                    }}
+                  />
+                }
+                label={
+                  <Typography sx={{ color: '#ffffff', fontWeight: useSandboxData ? 'bold' : 'normal' }}>
+                    Sandbox Data
+                  </Typography>
+                }
+                sx={{ ml: 0 }}
+              />
+            </Box>
+            
+            {useSandboxData && (
+              <Alert severity="info" sx={{ mb: 3, backgroundColor: '#1a1a1a', color: '#A9E5BB', border: '1px solid #A9E5BB' }}>
+                Showing dummy/sandbox data for demonstration purposes
+              </Alert>
+            )}
+            
+            {isLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                <CircularProgress size={30} sx={{ color: '#A9E5BB' }} />
+              </Box>
+            ) : isEmpty ? (
+              <Box sx={{ textAlign: 'center', py: 4, color: '#cccccc' }}>
+                No onboarding analytics data found
+              </Box>
+            ) : (
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ color: '#ffffff', fontWeight: 'bold', borderBottom: '1px solid #666666' }}>
+                        Step Name
+                      </TableCell>
+                      <TableCell sx={{ color: '#ffffff', fontWeight: 'bold', borderBottom: '1px solid #666666' }} align="right">
+                        Views
+                      </TableCell>
+                      <TableCell sx={{ color: '#ffffff', fontWeight: 'bold', borderBottom: '1px solid #666666' }} align="right">
+                        Completions
+                      </TableCell>
+                      <TableCell sx={{ color: '#ffffff', fontWeight: 'bold', borderBottom: '1px solid #666666' }} align="right">
+                        Completion Rate
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {displayData.map((step) => {
+                      const completionRate = step.completion_rate;
+                      const isLowRate = completionRate < 50;
+                      const isMediumRate = completionRate >= 50 && completionRate < 75;
+                      const isHighRate = completionRate >= 75;
+                      
+                      return (
+                        <TableRow key={step.step_name}>
+                          <TableCell sx={{ color: '#ffffff', borderBottom: '1px solid #333333' }}>
+                            {step.step_name}
+                          </TableCell>
+                          <TableCell sx={{ color: '#cccccc', borderBottom: '1px solid #333333' }} align="right">
+                            {step.views.toLocaleString()}
+                          </TableCell>
+                          <TableCell sx={{ color: '#cccccc', borderBottom: '1px solid #333333' }} align="right">
+                            {step.completions.toLocaleString()}
+                          </TableCell>
+                          <TableCell sx={{ borderBottom: '1px solid #333333' }} align="right">
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 }}>
+                              <Typography
+                                sx={{
+                                  color: isLowRate ? '#ff5252' : isMediumRate ? '#ff9800' : '#4caf50',
+                                  fontWeight: 'bold',
+                                }}
+                              >
+                                {completionRate.toFixed(1)}%
+                              </Typography>
+                              {isLowRate && (
+                                <Chip
+                                  label="Low"
+                                  size="small"
+                                  sx={{
+                                    backgroundColor: '#ff5252',
+                                    color: '#ffffff',
+                                    fontSize: '0.7rem',
+                                    height: '20px',
+                                  }}
+                                />
+                              )}
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Paper>
+        </Box>
+      );
+    };
+
     return (
       <Box sx={{ width: '100%' }}>
-        <Box sx={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)', mb: 2 }}>
-          <Tabs 
-            value={currentTab} 
-            onChange={handleTabChange} 
-            sx={{
-              '& .MuiTab-root': {
-                color: '#f5f5f5',
-                '&.Mui-selected': {
-                  color: '#ffffff',
-                },
-              },
-              '& .MuiTabs-indicator': {
-                backgroundColor: '#f5f5f5',
-              },
+        {/* iOS Update System Management Box */}
+        <Box sx={{ mb: 3 }}>
+          <Paper 
+            elevation={3} 
+            sx={{ 
+              backgroundColor: '#1a1a1a', 
+              borderRadius: 2, 
+              border: '1px solid #333333',
+              p: 3
             }}
           >
-            <Tab label={`Users (${users.length})`} />
-            <Tab label={`Admin (${players.length})`} />
-            <Tab label={`Support (${supportRequests.length})`} />
-            <Tab label={`Reports (${reports.length})`} />
-            <Tab label="Referral" />
-            <Tab label={`Banned (${bannedUsers.length})`} />
-            <Tab label={`Engagement Posts (${engagementPosts.length})`} />
-            <Tab label={`Engagement Comments (${allPosts.length})`} />
-          </Tabs>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ color: '#ffffff', mr: 2 }}>
+                📱 iOS Update System
+              </Typography>
+              <Chip 
+                label={iosUpdateSettings.force_update_enabled ? 'Enabled' : 'Disabled'} 
+                color={iosUpdateSettings.force_update_enabled ? 'success' : 'default'}
+                size="small"
+                sx={{ 
+                  backgroundColor: iosUpdateSettings.force_update_enabled ? '#4caf50' : '#666666',
+                  color: '#ffffff'
+                }}
+              />
+            </Box>
+            
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3, mb: 3 }}>
+              {/* Force Update Toggle */}
+              <Box>
+                <Typography variant="subtitle2" sx={{ color: '#cccccc', mb: 1 }}>
+                  Force Update Control
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Button
+                    variant={iosUpdateSettings.force_update_enabled ? 'contained' : 'outlined'}
+                    onClick={handleForceUpdateToggle}
+                    disabled={iosUpdateSaving}
+                    sx={{
+                      backgroundColor: iosUpdateSettings.force_update_enabled ? '#4caf50' : 'transparent',
+                      borderColor: iosUpdateSettings.force_update_enabled ? '#4caf50' : '#666666',
+                      color: '#ffffff',
+                      '&:hover': {
+                        backgroundColor: iosUpdateSettings.force_update_enabled ? '#45a049' : 'rgba(102, 102, 102, 0.1)',
+                      }
+                    }}
+                  >
+                    {iosUpdateSettings.force_update_enabled ? 'Disable Force Update' : 'Enable Force Update'}
+                  </Button>
+                  {iosUpdateSaving && <CircularProgress size={20} sx={{ color: '#A9E5BB' }} />}
+                </Box>
+              </Box>
+              
+              {/* Version Status */}
+              <Box>
+                <Typography variant="subtitle2" sx={{ color: '#cccccc', mb: 1 }}>
+                  Version Status
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                  <Typography variant="body2" sx={{ color: '#ffffff' }}>
+                    Current: {iosUpdateSettings.current_version}
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: '#cccccc' }}>
+                    →
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: '#A9E5BB' }}>
+                    Latest: {iosUpdateSettings.latest_version}
+                  </Typography>
+                  {iosUpdateSettings.current_version !== iosUpdateSettings.latest_version && (
+                    <Chip 
+                      label="Update Available" 
+                      size="small" 
+                      sx={{ 
+                        backgroundColor: '#ff9800', 
+                        color: '#ffffff',
+                        fontSize: '0.7rem'
+                      }} 
+                    />
+                  )}
+                </Box>
+              </Box>
+            </Box>
+            
+            {/* Custom Message Editor */}
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" sx={{ color: '#cccccc', mb: 1 }}>
+                Custom Update Message
+              </Typography>
+              <TextField
+                fullWidth
+                multiline
+                rows={2}
+                value={iosUpdateSettings.custom_message}
+                onChange={(e) => handleCustomMessageChange(e.target.value)}
+                onBlur={saveIosUpdateSettings}
+                placeholder="Enter custom message for update notification..."
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    backgroundColor: '#2a2a2a',
+                    color: '#ffffff',
+                    '& fieldset': {
+                      borderColor: '#666666',
+                    },
+                    '&:hover fieldset': {
+                      borderColor: '#A9E5BB',
+                    },
+                    '&.Mui-focused fieldset': {
+                      borderColor: '#A9E5BB',
+                    },
+                  },
+                  '& .MuiInputBase-input': {
+                    color: '#ffffff',
+                  },
+                }}
+              />
+            </Box>
+            
+            {/* Current Version Editor */}
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              <Typography variant="subtitle2" sx={{ color: '#cccccc', minWidth: '120px' }}>
+                Current Version:
+              </Typography>
+              <TextField
+                size="small"
+                value={iosUpdateSettings.current_version}
+                onChange={(e) => handleCurrentVersionChange(e.target.value)}
+                onBlur={saveIosUpdateSettings}
+                placeholder="1.0.6"
+                sx={{
+                  width: '120px',
+                  '& .MuiOutlinedInput-root': {
+                    backgroundColor: '#2a2a2a',
+                    color: '#ffffff',
+                    '& fieldset': {
+                      borderColor: '#666666',
+                    },
+                    '&:hover fieldset': {
+                      borderColor: '#A9E5BB',
+                    },
+                    '&.Mui-focused fieldset': {
+                      borderColor: '#A9E5BB',
+                    },
+                  },
+                  '& .MuiInputBase-input': {
+                    color: '#ffffff',
+                  },
+                }}
+              />
+              <Button
+                size="small"
+                onClick={fetchLatestAppStoreVersion}
+                disabled={iosUpdateLoading}
+                sx={{
+                  color: '#A9E5BB',
+                  borderColor: '#A9E5BB',
+                  '&:hover': {
+                    borderColor: '#CBB3FF',
+                    backgroundColor: 'rgba(203, 179, 255, 0.1)',
+                  }
+                }}
+                variant="outlined"
+              >
+                Refresh Latest
+              </Button>
+              {iosUpdateLoading && <CircularProgress size={16} sx={{ color: '#A9E5BB' }} />}
+            </Box>
+            
+            {/* App Store Info */}
+            <Box sx={{ mt: 2, p: 2, backgroundColor: '#2a2a2a', borderRadius: 1 }}>
+              <Typography variant="caption" sx={{ color: '#888888' }}>
+                App Store ID: 6747963200 | 
+                <a 
+                  href="https://apps.apple.com/us/app/momu-ai-journal/id6747963200" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ color: '#A9E5BB', textDecoration: 'none', marginLeft: '4px' }}
+                >
+                  View on App Store
+                </a>
+              </Typography>
+            </Box>
+          </Paper>
         </Box>
         
         <Box sx={{ px: 0 }}>
@@ -2829,6 +3294,7 @@ const Dashboard = () => {
           {currentTab === 5 && renderBannedUsers()}
           {currentTab === 6 && renderEngagementPosts()}
           {currentTab === 7 && renderEngagementComments()}
+          {currentTab === 8 && renderOnboardingAnalytics()}
         </Box>
       </Box>
     );
@@ -2870,15 +3336,32 @@ const Dashboard = () => {
         }}
       >
         <Toolbar sx={{ justifyContent: 'space-between' }}>
-          <Typography 
-            variant="h4" 
-            sx={{ 
-              color: '#333333',
-              fontWeight: 'bold',
-            }}
-          >
-          Momu Admin Dashboard
-        </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            {/* Menu button to expand sidebar when collapsed */}
+            {!sidebarOpen && (
+              <IconButton
+                onClick={() => setSidebarOpen(true)}
+                sx={{
+                  color: '#333333',
+                  backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                  },
+                }}
+              >
+                <MenuIcon />
+              </IconButton>
+            )}
+            <Typography 
+              variant="h4" 
+              sx={{ 
+                color: '#333333',
+                fontWeight: 'bold',
+              }}
+            >
+              Momu Admin Dashboard
+            </Typography>
+          </Box>
           
           <Box sx={{ display: 'flex', gap: 1 }}>
             <Button
@@ -2913,14 +3396,304 @@ const Dashboard = () => {
         </Toolbar>
       </AppBar>
       
-      <Box sx={{ flex: 1, p: 2 }}>
-        <Container maxWidth="lg">
-          <Paper elevation={3} sx={{ borderRadius: 2, overflow: 'hidden', backgroundColor: 'transparent', boxShadow: 'none' }}>
-            <Box sx={{ p: { xs: 2, md: 3 } }}>
-              {renderTabContent()}
-            </Box>
-          </Paper>
-        </Container>
+      <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* Sidebar */}
+        <Drawer
+          variant="persistent"
+          open={sidebarOpen}
+          sx={{
+            width: sidebarOpen ? 280 : 64,
+            flexShrink: 0,
+            '& .MuiDrawer-paper': {
+              width: sidebarOpen ? 280 : 64,
+              boxSizing: 'border-box',
+              backgroundColor: '#1a1a1a',
+              borderRight: '1px solid rgba(255, 255, 255, 0.1)',
+              transition: 'width 0.3s ease',
+              overflowX: 'hidden',
+            },
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', p: 1, minHeight: 64 }}>
+            <IconButton
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              sx={{
+                color: '#ffffff',
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                },
+              }}
+            >
+              {sidebarOpen ? <ChevronLeftIcon /> : <ChevronRightIcon />}
+            </IconButton>
+          </Box>
+          <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)' }} />
+          <List sx={{ overflowY: 'auto', flex: 1, px: 1 }}>
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 0}
+                onClick={() => setCurrentTab(0)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 0 ? '#A9E5BB' : '#cccccc' }}>
+                  <PeopleIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary={`Users (${users.length})`} 
+                    sx={{ color: currentTab === 0 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 1}
+                onClick={() => setCurrentTab(1)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 1 ? '#A9E5BB' : '#cccccc' }}>
+                  <AdminPanelSettingsIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary={`Admin (${players.length})`} 
+                    sx={{ color: currentTab === 1 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 2}
+                onClick={() => setCurrentTab(2)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 2 ? '#A9E5BB' : '#cccccc' }}>
+                  <SupportIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary={`Support (${supportRequests.length})`} 
+                    sx={{ color: currentTab === 2 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 3}
+                onClick={() => setCurrentTab(3)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 3 ? '#A9E5BB' : '#cccccc' }}>
+                  <ReportIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary={`Reports (${reports.length})`} 
+                    sx={{ color: currentTab === 3 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 4}
+                onClick={() => setCurrentTab(4)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 4 ? '#A9E5BB' : '#cccccc' }}>
+                  <CardGiftcardIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary="Referral" 
+                    sx={{ color: currentTab === 4 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 5}
+                onClick={() => setCurrentTab(5)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 5 ? '#A9E5BB' : '#cccccc' }}>
+                  <BlockIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary={`Banned (${bannedUsers.length})`} 
+                    sx={{ color: currentTab === 5 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 6}
+                onClick={() => setCurrentTab(6)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 6 ? '#A9E5BB' : '#cccccc' }}>
+                  <PostAddIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary={`Engagement Posts (${engagementPosts.length})`} 
+                    sx={{ color: currentTab === 6 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 7}
+                onClick={() => setCurrentTab(7)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 7 ? '#A9E5BB' : '#cccccc' }}>
+                  <CommentIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary={`Engagement Comments (${allPosts.length})`} 
+                    sx={{ color: currentTab === 7 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 8}
+                onClick={() => setCurrentTab(8)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 8 ? '#A9E5BB' : '#cccccc' }}>
+                  <AnalyticsIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary="Onboarding Analytics" 
+                    sx={{ color: currentTab === 8 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+          </List>
+        </Drawer>
+        
+        {/* Main Content */}
+        <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+          <Container maxWidth="lg">
+            <Paper elevation={3} sx={{ borderRadius: 2, overflow: 'hidden', backgroundColor: 'transparent', boxShadow: 'none' }}>
+              <Box sx={{ p: { xs: 2, md: 3 } }}>
+                {renderTabContent()}
+              </Box>
+            </Paper>
+          </Container>
+        </Box>
       </Box>
       
       {/* User Details Modal - Shared between Users and Players tabs */}

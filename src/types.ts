@@ -52,4 +52,11 @@ export interface AdminUser {
   name: string;
   role: 'admin' | 'super_admin';
   created_at: string;
+}
+
+export interface OnboardingAnalytics {
+  step_name: string;
+  views: number;
+  completions: number;
+  completion_rate: number;
 } 

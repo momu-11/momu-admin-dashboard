@@ -1077,5 +1077,78 @@ export const unbanUser = async (userId: string) => {
   }
 };
 
+// Onboarding Analytics functions
+export const getOnboardingAnalytics = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('onboarding_events')
+      .select('step_name, event_type');
+
+    if (error) {
+      console.error('Error fetching onboarding analytics:', error);
+      return { data: null, error };
+    }
+
+    // Process the data to calculate views, completions, and completion rates
+    const stepStats = new Map<string, { views: number; completions: number }>();
+    
+    data?.forEach((event: any) => {
+      if (!event.step_name) return;
+      
+      if (!stepStats.has(event.step_name)) {
+        stepStats.set(event.step_name, { views: 0, completions: 0 });
+      }
+      
+      const stats = stepStats.get(event.step_name)!;
+      
+      if (event.event_type === 'step_viewed') {
+        stats.views++;
+      } else if (event.event_type === 'step_completed') {
+        stats.completions++;
+      }
+    });
+
+    // Define the order of steps
+    const stepOrder = [
+      'welcome',
+      'reason',
+      'mood-check',
+      'journaling-experience',
+      'user-details',
+      'solution',
+      'chart',
+      'goals',
+      'time-preference',
+      'testimonials',
+      'referral',
+      'outcome-preview',
+      'paywall',
+      'special-offer'
+    ];
+
+    // Convert to array and calculate completion rates
+    const analytics = stepOrder
+      .filter(stepName => stepStats.has(stepName))
+      .map(stepName => {
+        const stats = stepStats.get(stepName)!;
+        const completion_rate = stats.views > 0 
+          ? Math.round((stats.completions / stats.views) * 1000) / 10 
+          : 0;
+        
+        return {
+          step_name: stepName,
+          views: stats.views,
+          completions: stats.completions,
+          completion_rate
+        };
+      });
+
+    return { data: analytics, error: null };
+  } catch (error) {
+    console.error('Exception in getOnboardingAnalytics:', error);
+    return { data: null, error };
+  }
+};
+
 // Export supabase client for direct use
 export { supabase }; 
