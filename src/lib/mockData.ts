@@ -90,51 +90,12 @@ export const signIn = async (email: string, password: string) => {
       }
     }
     
-    // Test basic connection first
-    try {
-      const { data: testData, error: testError } = await supabase
-        .from('user_profiles')
-        .select('count')
-        .limit(1);
-      
-      if (testError) {
-        console.error('Connection test failed:', testError);
-        if (testError.code === 'PGRST301') {
-          return { 
-            data: null, 
-            error: { 
-              message: 'Cannot reach Supabase server. Please check your internet connection and try again.' 
-            } 
-          };
-        } else if (testError.code === 'PGRST116') {
-          return { 
-            data: null, 
-            error: { 
-              message: 'Invalid Supabase credentials. Please check your environment variables.' 
-            } 
-          };
-        } else {
-          return { 
-            data: null, 
-            error: { 
-              message: `Database connection error: ${testError.message}` 
-            } 
-          };
-        }
-      }
-    } catch (connectionError) {
-      console.error('Connection test exception:', connectionError);
-      return { 
-        data: null, 
-        error: { 
-          message: 'Cannot reach Supabase server. Please check your internet connection and try again.' 
-        } 
-      };
-    }
+    // Removed pre-flight connection test - let the actual auth attempt handle connection issues
+    // This prevents blocking on network tests that might fail due to firewall/VPN/proxy issues
     
-    // Add timeout to prevent hanging
+    // Add timeout to prevent hanging - increased to 15 seconds for slower connections
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Login timeout after 10 seconds')), 10000);
+      setTimeout(() => reject(new Error('Login timeout after 15 seconds')), 15000);
     });
     
     const authPromise = supabase.auth.signInWithPassword({
@@ -169,6 +130,13 @@ export const signIn = async (email: string, password: string) => {
           data: null, 
           error: { 
             message: 'Too many login attempts. Please wait a few minutes and try again.' 
+          } 
+        };
+      } else if (error.message?.includes('fetch') || error.message?.includes('network') || error.message?.includes('Failed to fetch')) {
+        return { 
+          data: null, 
+          error: { 
+            message: 'Network error. Please check your internet connection and try again.' 
           } 
         };
       } else {
@@ -259,23 +227,30 @@ export const getCurrentUser = async (): Promise<MockAuthUser | null> => {
   }
 };
 
-// Test network connectivity
+// Test network connectivity - simplified to avoid external dependencies
 export const testNetworkConnection = async () => {
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    // Instead of testing external services, just test if we can reach Supabase
+    // This is more reliable and doesn't depend on external services that might be blocked
+    if (!process.env.REACT_APP_SUPABASE_URL) {
+      return true; // Allow fallback auth if no Supabase configured
+    }
     
-    const response = await fetch('https://httpbin.org/get', { 
-      method: 'GET',
-      mode: 'cors',
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    
+    // Just test if we can reach the Supabase URL
+    const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
+    const response = await fetch(`${supabaseUrl}/rest/v1/`, { 
+      method: 'HEAD',
       signal: controller.signal
     });
     
     clearTimeout(timeoutId);
-    return response.ok;
+    return true; // If we get any response, network is working
   } catch (error) {
-    console.error('Network test failed:', error);
-    return false;
+    console.warn('Network test failed (non-blocking):', error);
+    return true; // Don't block login if network test fails - let Supabase connection handle it
   }
 };
 
@@ -302,9 +277,9 @@ export const checkAdminUsers = async () => {
       };
     }
     
-    // Add timeout to prevent hanging
+    // Add timeout to prevent hanging - increased to 15 seconds for slower connections
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Database query timeout after 10 seconds')), 10000);
+      setTimeout(() => reject(new Error('Database query timeout after 15 seconds')), 15000);
     });
     
     const queryPromise = supabase

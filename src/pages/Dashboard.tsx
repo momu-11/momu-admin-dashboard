@@ -1470,7 +1470,7 @@ const Dashboard = () => {
       const { data, error } = await supabase
         .from('app_settings')
         .select('*')
-        .eq('key', 'force_update_enabled')
+        .eq('setting_key', 'force_update_enabled')
         .single();
       
       if (error) {
@@ -1489,7 +1489,7 @@ const Dashboard = () => {
         }
       } else if (data) {
         console.log('Settings found:', data);
-        const settings = data.value || {};
+        const settings = data.setting_value || {};
         setIosUpdateSettings((prev: any) => ({
           ...prev,
           force_update_enabled: settings.enabled || false,
@@ -1531,14 +1531,17 @@ const Dashboard = () => {
     }
   };
   
-  const saveIosUpdateSettings = async () => {
+  const saveIosUpdateSettings = async (updatedSettings?: any) => {
     setIosUpdateSaving(true);
     try {
+      // Use passed settings or current state
+      const settingsToSave = updatedSettings || iosUpdateSettings;
+      
       const settingsData = {
-        enabled: iosUpdateSettings.force_update_enabled,
-        message: iosUpdateSettings.custom_message,
-        current_version: iosUpdateSettings.current_version,
-        latest_version: iosUpdateSettings.latest_version,
+        enabled: settingsToSave.force_update_enabled,
+        message: settingsToSave.custom_message,
+        current_version: settingsToSave.current_version,
+        latest_version: settingsToSave.latest_version,
         updated_at: new Date().toISOString()
       };
       
@@ -1547,11 +1550,11 @@ const Dashboard = () => {
       const { data, error } = await supabase
         .from('app_settings')
         .upsert({
-          key: 'force_update_enabled',
-          value: settingsData,
+          setting_key: 'force_update_enabled',
+          setting_value: settingsData,
           updated_at: new Date().toISOString()
         }, {
-          onConflict: 'key'
+          onConflict: 'setting_key'
         });
       
       if (error) {
@@ -1560,11 +1563,19 @@ const Dashboard = () => {
       }
       
       console.log('iOS update settings saved successfully:', data);
-    } catch (error) {
+      
+      // Show success message
+      const successMessage = document.createElement('div');
+      successMessage.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #4caf50; color: white; padding: 16px 24px; border-radius: 8px; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);';
+      successMessage.textContent = '✓ Settings saved successfully';
+      document.body.appendChild(successMessage);
+      setTimeout(() => successMessage.remove(), 3000);
+      
+    } catch (error: any) {
       console.error('Failed to save iOS update settings:', error);
-      // Show error to user
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      alert(`Failed to save settings: ${errorMessage}`);
+      // Show detailed error to user
+      const errorMessage = error?.message || error?.error_description || JSON.stringify(error) || 'Unknown error occurred';
+      alert(`Failed to save settings: ${errorMessage}\n\nCheck console for details.`);
     } finally {
       setIosUpdateSaving(false);
     }
@@ -1576,7 +1587,8 @@ const Dashboard = () => {
       force_update_enabled: !iosUpdateSettings.force_update_enabled
     };
     setIosUpdateSettings(newSettings);
-    await saveIosUpdateSettings();
+    // Pass the new settings directly to avoid stale state
+    await saveIosUpdateSettings(newSettings);
   };
   
   const handleCustomMessageChange = (message: string) => {

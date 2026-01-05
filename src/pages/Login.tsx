@@ -11,7 +11,7 @@ import {
 } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { checkAdminUsers, testNetworkConnection } from '../lib/mockData';
+import { checkAdminUsers } from '../lib/mockData';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -50,19 +50,13 @@ const Login = () => {
     }
     
     try {
-      // Set a timeout for the entire connection test
+      // Simplified connection test with single timeout
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Connection timeout - server not responding')), 10000);
+        setTimeout(() => reject(new Error('Connection timeout - server not responding after 15 seconds')), 15000);
       });
       
       const connectionTest = async () => {
-        // Test network connectivity first
-        const networkOk = await testNetworkConnection();
-        if (!networkOk) {
-          throw new Error('Network connectivity failed');
-        }
-        
-        // Test Supabase connection
+        // Direct Supabase connection test - no external network checks
         const result = await checkAdminUsers();
         console.log('Connection test result:', result);
         
@@ -76,13 +70,23 @@ const Login = () => {
       const result = await Promise.race([connectionTest(), timeoutPromise]) as any;
       
       setConnectionStatus('connected');
-      setServerInfo(`✅ Connected to Supabase (${process.env.REACT_APP_SUPABASE_URL?.split('//')[1]?.split('.')[0]})`);
+      const supabaseHost = process.env.REACT_APP_SUPABASE_URL?.split('//')[1]?.split('.')[0] || 'server';
+      setServerInfo(`✅ Connected to Supabase (${supabaseHost})`);
       setAdminUsersCount(result.data?.length || 0);
       
     } catch (error) {
       console.error('Connection test error:', error);
       setConnectionStatus('error');
-      setServerInfo(`❌ ${error instanceof Error ? error.message : 'Connection failed'}`);
+      
+      // Provide helpful error messages
+      const errorMessage = error instanceof Error ? error.message : 'Connection failed';
+      if (errorMessage.includes('timeout')) {
+        setServerInfo(`❌ Connection timeout - check your internet connection or try again`);
+      } else if (errorMessage.includes('fetch') || errorMessage.includes('network')) {
+        setServerInfo(`❌ Network error - check firewall/VPN settings`);
+      } else {
+        setServerInfo(`❌ ${errorMessage}`);
+      }
       setAdminUsersCount(0);
     }
   };
