@@ -1436,7 +1436,15 @@ const Dashboard = () => {
         getBannedUsers()
       ]);
       
-
+      console.log('Support data result:', { data: supportData.data, error: supportData.error, count: supportData.data?.length });
+      
+      if (supportData.error) {
+        console.error('Error fetching support requests in fetchAllData:', supportData.error);
+      }
+      
+      if (reportsData.error) {
+        console.error('Error fetching reports in fetchAllData:', reportsData.error);
+      }
       
       setUsers(usersData.data || []);
       setPlayers(playersData.data || []);

@@ -467,17 +467,25 @@ export const getCommunities = async () => {
 
 export const getSupportRequests = async () => {
   try {
+    console.log('Fetching support requests from support_requests table...');
     const { data, error } = await supabase
       .from('support_requests')
       .select('*')
       .order('created_at', { ascending: false });
 
     if (error) {
+      console.error('Error fetching support requests:', error);
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      console.error('Error details:', error.details);
       return { data: null, error };
     }
 
+    console.log('Support requests fetched successfully:', data?.length, 'records');
+    console.log('Sample support request:', data?.[0]);
     return { data: data || [], error: null };
   } catch (error) {
+    console.error('Exception in getSupportRequests:', error);
     return { data: null, error };
   }
 };
