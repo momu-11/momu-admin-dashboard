@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Box, Container, Paper, Alert, Typography, CircularProgress, Tabs, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button, AppBar, Toolbar, TextField, Card, CardContent, Avatar, Dialog, DialogTitle, DialogContent, IconButton, Pagination, Select, MenuItem, FormControl, ImageList, ImageListItem, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Switch, FormControlLabel } from '@mui/material';
-import { Close as CloseIcon, Visibility as VisibilityIcon, CalendarToday as CalendarIcon, Delete as DeleteIcon, Menu as MenuIcon, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, People as PeopleIcon, AdminPanelSettings as AdminPanelSettingsIcon, Support as SupportIcon, Report as ReportIcon, CardGiftcard as CardGiftcardIcon, Block as BlockIcon, PostAdd as PostAddIcon, Comment as CommentIcon, Analytics as AnalyticsIcon } from '@mui/icons-material';
+import { Close as CloseIcon, Visibility as VisibilityIcon, CalendarToday as CalendarIcon, Delete as DeleteIcon, Menu as MenuIcon, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, People as PeopleIcon, AdminPanelSettings as AdminPanelSettingsIcon, Support as SupportIcon, Report as ReportIcon, CardGiftcard as CardGiftcardIcon, Block as BlockIcon, PostAdd as PostAddIcon, Comment as CommentIcon, Analytics as AnalyticsIcon, Home as HomeIcon, Settings as SettingsIcon, TrendingUp as TrendingUpIcon } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { supabase, getUsers, getPlayers, getSupportRequests, getReports, getUserPosts, getUserComments, deletePost, deleteComment, sendNotification, getUserNotifications, updateSupportRequestStatus, updateReportStatus, deleteReport, getReferralCodes, getReferralRedemptions, deleteSupportRequest, getUserById, getBannedUsers, banUser, unbanUser, getOnboardingAnalytics } from '../lib/mockData';
+import { supabase, getUsers, getPlayers, getSupportRequests, getReports, getUserPosts, getUserComments, deletePost, deleteComment, sendNotification, getUserNotifications, updateSupportRequestStatus, updateReportStatus, deleteReport, getReferralCodes, getReferralRedemptions, deleteSupportRequest, getUserById, getBannedUsers, banUser, unbanUser, getOnboardingAnalytics, getUserStats, getSubscriptionStats, getSupportStats, getReportStats, getPopularReferralCodes, getCommunityStats, UserStats, SubscriptionStats, SupportStats, ReportStats, ReferralCodeStats, CommunityStats } from '../lib/mockData';
 import { getSupportScreenshotUrl } from '../lib/supabase';
 
 // Screenshot Display Component
@@ -273,6 +273,18 @@ const Dashboard = () => {
   const [onboardingAnalytics, setOnboardingAnalytics] = useState<any[]>([]);
   const [onboardingAnalyticsLoading, setOnboardingAnalyticsLoading] = useState<boolean>(false);
   const [useSandboxData, setUseSandboxData] = useState<boolean>(false);
+  
+  // Home dashboard stats state
+  const [userStats, setUserStats] = useState<UserStats | null>(null);
+  const [subscriptionStats, setSubscriptionStats] = useState<SubscriptionStats | null>(null);
+  const [supportStats, setSupportStats] = useState<SupportStats | null>(null);
+  const [reportStats, setReportStats] = useState<ReportStats | null>(null);
+  const [popularReferrals, setPopularReferrals] = useState<ReferralCodeStats[]>([]);
+  const [communityStats, setCommunityStats] = useState<CommunityStats[]>([]);
+  const [homeStatsLoading, setHomeStatsLoading] = useState<boolean>(false);
+  const [userStatsPeriod, setUserStatsPeriod] = useState<'week' | 'month' | 'sixMonths' | 'year' | 'all'>('month');
+  const [referralPeriod, setReferralPeriod] = useState<'week' | 'month' | 'sixMonths' | 'year' | 'all'>('month');
+  const [communityPeriod, setCommunityPeriod] = useState<'day' | 'threeDay' | 'week' | 'month'>('week');
   
   // Helper functions
   const generateUsername = (email: string) => {
@@ -1437,6 +1449,9 @@ const Dashboard = () => {
       
       // Fetch onboarding analytics
       await fetchOnboardingAnalytics();
+      
+      // Fetch home dashboard stats
+      await fetchHomeStats();
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
@@ -1460,6 +1475,44 @@ const Dashboard = () => {
       setOnboardingAnalyticsLoading(false);
     }
   }, []);
+  
+  // Home Dashboard Stats functions
+  const fetchHomeStats = useCallback(async () => {
+    setHomeStatsLoading(true);
+    try {
+      const [userStatsResult, subscriptionStatsResult, supportStatsResult, reportStatsResult, referralsResult, communityResult] = await Promise.all([
+        getUserStats(),
+        getSubscriptionStats(),
+        getSupportStats(),
+        getReportStats(),
+        getPopularReferralCodes(referralPeriod),
+        getCommunityStats(communityPeriod)
+      ]);
+      
+      if (userStatsResult.data) setUserStats(userStatsResult.data);
+      if (subscriptionStatsResult.data) setSubscriptionStats(subscriptionStatsResult.data);
+      if (supportStatsResult.data) setSupportStats(supportStatsResult.data);
+      if (reportStatsResult.data) setReportStats(reportStatsResult.data);
+      if (referralsResult.data) setPopularReferrals(referralsResult.data);
+      if (communityResult.data) setCommunityStats(communityResult.data);
+    } catch (error) {
+      console.error('Failed to fetch home stats:', error);
+    } finally {
+      setHomeStatsLoading(false);
+    }
+  }, [referralPeriod, communityPeriod]);
+  
+  // Fetch referrals when period changes
+  const fetchPopularReferrals = useCallback(async () => {
+    const { data } = await getPopularReferralCodes(referralPeriod);
+    if (data) setPopularReferrals(data);
+  }, [referralPeriod]);
+  
+  // Fetch community stats when period changes
+  const fetchCommunityStatsData = useCallback(async () => {
+    const { data } = await getCommunityStats(communityPeriod);
+    if (data) setCommunityStats(data);
+  }, [communityPeriod]);
   
   // iOS Update System functions
   const fetchIosUpdateSettings = useCallback(async () => {
@@ -1669,7 +1722,7 @@ const Dashboard = () => {
 
   // Fetch all posts when engagement comments tab is accessed or filter changes
   useEffect(() => {
-    if (currentTab === 7) { // Engagement Comments tab
+    if (currentTab === 8) { // Engagement Comments tab
       fetchAllPosts();
     }
   }, [currentTab, postFilter, fetchAllPosts]);
@@ -1685,6 +1738,20 @@ const Dashboard = () => {
       return () => clearInterval(countdownTimer);
     }
   }, [showScheduledPosts, scheduledPosts.length]);
+  
+  // Refetch referrals when period changes
+  useEffect(() => {
+    if (currentTab === 0) {
+      fetchPopularReferrals();
+    }
+  }, [referralPeriod, currentTab, fetchPopularReferrals]);
+  
+  // Refetch community stats when period changes
+  useEffect(() => {
+    if (currentTab === 0) {
+      fetchCommunityStatsData();
+    }
+  }, [communityPeriod, currentTab, fetchCommunityStatsData]);
   
   // If user is not authenticated and not loading, redirect to login
   if (!loading && !user) {
@@ -3112,10 +3179,577 @@ const Dashboard = () => {
       );
     };
 
-    return (
-      <Box sx={{ width: '100%' }}>
-        {/* iOS Update System Management Box */}
-        <Box sx={{ mb: 3 }}>
+    // Home Dashboard render function
+    const renderHome = () => {
+      const periodLabels: Record<string, string> = {
+        week: 'This Week',
+        month: 'This Month',
+        sixMonths: 'Last 6 Months',
+        year: 'This Year',
+        all: 'All Time'
+      };
+      
+      const communityPeriodLabels: Record<string, string> = {
+        day: '24 Hours',
+        threeDay: '3 Days',
+        week: '7 Days',
+        month: '30 Days'
+      };
+      
+      // Calculate total posts and comments for the period
+      const totalPosts = communityStats.reduce((sum, stat) => sum + stat.posts, 0);
+      const totalComments = communityStats.reduce((sum, stat) => sum + stat.comments, 0);
+
+      return (
+        <Box>
+          <Typography variant="h4" sx={{ color: '#ffffff', mb: 3, fontWeight: 600 }}>
+            📊 Dashboard Overview
+          </Typography>
+          
+          {homeStatsLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+              <CircularProgress sx={{ color: '#A9E5BB' }} />
+            </Box>
+          ) : (
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' }, gap: 3 }}>
+              {/* Subscriptions Card (Combined) */}
+              <Paper sx={{ 
+                backgroundColor: '#1a1a1a', 
+                borderRadius: 3, 
+                p: 3,
+                border: '1px solid #333333',
+                gridColumn: { xs: '1', md: '1 / -1' }
+              }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h6" sx={{ color: '#CBB3FF', display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CardGiftcardIcon /> Subscriptions
+                  </Typography>
+                  <FormControl size="small">
+                    <Select
+                      value={userStatsPeriod}
+                      onChange={(e) => setUserStatsPeriod(e.target.value as any)}
+                      sx={{
+                        color: '#ffffff',
+                        backgroundColor: '#2a2a2a',
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' },
+                        '& .MuiSvgIcon-root': { color: '#ffffff' },
+                        minWidth: 100,
+                      }}
+                    >
+                      <MenuItem value="week">Week</MenuItem>
+                      <MenuItem value="month">Month</MenuItem>
+                      <MenuItem value="sixMonths">6 Months</MenuItem>
+                      <MenuItem value="year">Year</MenuItem>
+                      <MenuItem value="all">All</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Box>
+                
+                {/* Active/Inactive Subscriptions Section */}
+                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 3 }}>
+                  {/* Active Subscriptions Box */}
+                  <Box sx={{ 
+                    backgroundColor: '#2a2a2a', 
+                    borderRadius: 2, 
+                    p: 3,
+                    border: '2px solid #4caf50',
+                    textAlign: 'center'
+                  }}>
+                    <Typography variant="h3" sx={{ color: '#4caf50', fontWeight: 700, mb: 1 }}>
+                      {userStats?.active?.[userStatsPeriod]?.toLocaleString() || 0}
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: '#888888' }}>
+                      {userStatsPeriod === 'all' ? 'Total Active' : `New Subscriptions (${periodLabels[userStatsPeriod]})`}
+                    </Typography>
+                  </Box>
+                  
+                  {/* Inactive Subscriptions Box */}
+                  <Box sx={{ 
+                    backgroundColor: '#2a2a2a', 
+                    borderRadius: 2, 
+                    p: 3,
+                    border: '2px solid #f44336',
+                    textAlign: 'center'
+                  }}>
+                    <Typography variant="h3" sx={{ color: '#f44336', fontWeight: 700, mb: 1 }}>
+                      {userStats?.inactive?.[userStatsPeriod]?.toLocaleString() || 0}
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: '#888888' }}>
+                      {userStatsPeriod === 'all' ? 'Total Inactive' : `Churned (${periodLabels[userStatsPeriod]})`}
+                    </Typography>
+                  </Box>
+                </Box>
+                
+                {/* Churn Rate */}
+                <Box sx={{ 
+                  mb: 3, 
+                  pt: 2, 
+                  borderTop: '1px solid #333333',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <Typography variant="body2" sx={{ color: '#888888' }}>
+                    Total: <strong style={{ color: '#ffffff' }}>{userStats?.total?.toLocaleString() || 0}</strong> users
+                  </Typography>
+                  <Box sx={{ 
+                    backgroundColor: userStats?.churnRate && userStats.churnRate > 10 ? '#3d1a1a' : '#2a2a2a',
+                    borderRadius: 1,
+                    px: 2,
+                    py: 0.5
+                  }}>
+                    <Typography variant="body2" sx={{ 
+                      color: userStats?.churnRate && userStats.churnRate > 10 ? '#ff6659' : '#888888',
+                      fontWeight: 600
+                    }}>
+                      Churn: <span style={{ 
+                        color: userStats?.churnRate && userStats.churnRate > 10 ? '#f44336' : '#ffffff' 
+                      }}>{userStats?.churnRate || 0}%</span>
+                    </Typography>
+                  </Box>
+                </Box>
+                
+                {/* Subscription Types Breakdown */}
+                <Box sx={{ 
+                  pt: 2, 
+                  borderTop: '1px solid #333333'
+                }}>
+                  <Typography variant="subtitle2" sx={{ color: '#cccccc', mb: 1.5 }}>
+                    Subscription Types ({periodLabels[userStatsPeriod]})
+                  </Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1.5 }}>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center',
+                      border: '1px solid #4caf50'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#4caf50', fontWeight: 700 }}>
+                        {subscriptionStats?.monthly?.[userStatsPeriod] || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Monthly
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center',
+                      border: '1px solid #2196f3'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#2196f3', fontWeight: 700 }}>
+                        {subscriptionStats?.yearly?.[userStatsPeriod] || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Yearly
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center',
+                      border: '1px solid #ff9800'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#ff9800', fontWeight: 700 }}>
+                        {subscriptionStats?.specialOffer?.[userStatsPeriod] || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Special Offer
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center',
+                      border: '1px solid #9c27b0'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#9c27b0', fontWeight: 700 }}>
+                        {subscriptionStats?.restoredPromo?.[userStatsPeriod] || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Restored/Promo
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Box>
+              </Paper>
+              
+              {/* Support & Reports Row */}
+              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+                {/* Support Tickets Card */}
+                <Paper sx={{ 
+                  backgroundColor: '#1a1a1a', 
+                  borderRadius: 3, 
+                  p: 3,
+                  border: '1px solid #333333'
+                }}>
+                  <Typography variant="h6" sx={{ color: '#FFB385', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <SupportIcon /> Support Tickets
+                  </Typography>
+                  
+                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1 }}>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#ff5252', fontWeight: 700 }}>
+                        {supportStats?.open || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Open
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#ff9800', fontWeight: 700 }}>
+                        {supportStats?.inProgress || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Pending
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#4caf50', fontWeight: 700 }}>
+                        {supportStats?.resolved || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Resolved
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#666666', fontWeight: 700 }}>
+                        {supportStats?.closed || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Closed
+                      </Typography>
+                    </Box>
+                  </Box>
+                  
+                  <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #333333' }}>
+                    <Typography variant="body2" sx={{ color: '#ffffff', textAlign: 'center' }}>
+                      Total: <strong>{supportStats?.total || 0}</strong> tickets
+                    </Typography>
+                  </Box>
+                </Paper>
+
+                {/* Reports Card */}
+                <Paper sx={{ 
+                  backgroundColor: '#1a1a1a', 
+                  borderRadius: 3, 
+                  p: 3,
+                  border: '1px solid #333333'
+                }}>
+                  <Typography variant="h6" sx={{ color: '#FF8A80', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <ReportIcon /> Community Reports
+                  </Typography>
+                  
+                  <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1 }}>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#ff5252', fontWeight: 700 }}>
+                        {reportStats?.pending || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Pending
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#ff9800', fontWeight: 700 }}>
+                        {reportStats?.reviewed || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Reviewed
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#4caf50', fontWeight: 700 }}>
+                        {reportStats?.resolved || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Resolved
+                      </Typography>
+                    </Box>
+                    <Box sx={{ 
+                      backgroundColor: '#2a2a2a', 
+                      borderRadius: 2, 
+                      p: 1.5,
+                      textAlign: 'center'
+                    }}>
+                      <Typography variant="h5" sx={{ color: '#666666', fontWeight: 700 }}>
+                        {reportStats?.dismissed || 0}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: '#888888' }}>
+                        Dismissed
+                      </Typography>
+                    </Box>
+                  </Box>
+                  
+                  <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #333333' }}>
+                    <Typography variant="body2" sx={{ color: '#ffffff', textAlign: 'center' }}>
+                      Total: <strong>{reportStats?.total || 0}</strong> reports
+                    </Typography>
+                  </Box>
+                </Paper>
+              </Box>
+              
+              {/* Community Activity Card */}
+              <Paper sx={{ 
+                backgroundColor: '#1a1a1a', 
+                borderRadius: 3, 
+                p: 3,
+                border: '1px solid #333333'
+              }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h6" sx={{ color: '#B3E5FC', display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <TrendingUpIcon /> Community Activity
+                  </Typography>
+                  <FormControl size="small">
+                    <Select
+                      value={communityPeriod}
+                      onChange={(e) => setCommunityPeriod(e.target.value as any)}
+                      sx={{
+                        color: '#ffffff',
+                        backgroundColor: '#2a2a2a',
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' },
+                        '& .MuiSvgIcon-root': { color: '#ffffff' },
+                        minWidth: 100,
+                      }}
+                    >
+                      <MenuItem value="day">Day</MenuItem>
+                      <MenuItem value="threeDay">3 Days</MenuItem>
+                      <MenuItem value="week">Week</MenuItem>
+                      <MenuItem value="month">Month</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Box>
+                
+                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2 }}>
+                  <Box sx={{ 
+                    backgroundColor: '#2a2a2a', 
+                    borderRadius: 2, 
+                    p: 2,
+                    textAlign: 'center',
+                    border: '1px solid #B3E5FC'
+                  }}>
+                    <Typography variant="h4" sx={{ color: '#B3E5FC', fontWeight: 700 }}>
+                      {totalPosts}
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: '#888888' }}>
+                      Posts ({communityPeriodLabels[communityPeriod]})
+                    </Typography>
+                  </Box>
+                  <Box sx={{ 
+                    backgroundColor: '#2a2a2a', 
+                    borderRadius: 2, 
+                    p: 2,
+                    textAlign: 'center',
+                    border: '1px solid #CBB3FF'
+                  }}>
+                    <Typography variant="h4" sx={{ color: '#CBB3FF', fontWeight: 700 }}>
+                      {totalComments}
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: '#888888' }}>
+                      Comments ({communityPeriodLabels[communityPeriod]})
+                    </Typography>
+                  </Box>
+                </Box>
+                
+                {/* Simple bar visualization */}
+                <Box sx={{ 
+                  backgroundColor: '#2a2a2a', 
+                  borderRadius: 2, 
+                  p: 2,
+                  maxHeight: 150,
+                  overflow: 'auto'
+                }}>
+                  {communityStats.length === 0 ? (
+                    <Typography variant="body2" sx={{ color: '#666666', textAlign: 'center' }}>
+                      No activity data
+                    </Typography>
+                  ) : (
+                    [...communityStats].reverse().map((stat, index) => (
+                      <Box key={index} sx={{ mb: 1 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="caption" sx={{ color: '#888888' }}>
+                            {new Date(stat.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#ffffff' }}>
+                            {stat.posts}p / {stat.comments}c
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', gap: 0.5, height: 8 }}>
+                          <Box 
+                            sx={{ 
+                              backgroundColor: '#B3E5FC', 
+                              borderRadius: 1,
+                              height: '100%',
+                              width: `${Math.min((stat.posts / Math.max(totalPosts, 1)) * 100, 100)}%`,
+                              minWidth: stat.posts > 0 ? 4 : 0,
+                              transition: 'width 0.3s'
+                            }} 
+                          />
+                          <Box 
+                            sx={{ 
+                              backgroundColor: '#CBB3FF', 
+                              borderRadius: 1,
+                              height: '100%',
+                              width: `${Math.min((stat.comments / Math.max(totalComments, 1)) * 100, 100)}%`,
+                              minWidth: stat.comments > 0 ? 4 : 0,
+                              transition: 'width 0.3s'
+                            }} 
+                          />
+                        </Box>
+                      </Box>
+                    ))
+                  )}
+                </Box>
+              </Paper>
+              
+              {/* Popular Referral Codes Card - Full Width */}
+              <Paper sx={{ 
+                backgroundColor: '#1a1a1a', 
+                borderRadius: 3, 
+                p: 3,
+                border: '1px solid #333333',
+                gridColumn: { xs: '1', md: '1 / -1' }
+              }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h6" sx={{ color: '#A9E5BB', display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CardGiftcardIcon /> Popular Referral Codes
+                  </Typography>
+                  <FormControl size="small">
+                    <Select
+                      value={referralPeriod}
+                      onChange={(e) => setReferralPeriod(e.target.value as any)}
+                      sx={{
+                        color: '#ffffff',
+                        backgroundColor: '#2a2a2a',
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' },
+                        '& .MuiSvgIcon-root': { color: '#ffffff' },
+                        minWidth: 120,
+                      }}
+                    >
+                      <MenuItem value="week">Week</MenuItem>
+                      <MenuItem value="month">Month</MenuItem>
+                      <MenuItem value="sixMonths">6 Months</MenuItem>
+                      <MenuItem value="year">Year</MenuItem>
+                      <MenuItem value="all">All Time</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Box>
+                
+                <Box sx={{ 
+                  maxHeight: 300, 
+                  overflow: 'auto',
+                  '&::-webkit-scrollbar': {
+                    width: '8px',
+                  },
+                  '&::-webkit-scrollbar-track': {
+                    backgroundColor: '#2a2a2a',
+                    borderRadius: '4px',
+                  },
+                  '&::-webkit-scrollbar-thumb': {
+                    backgroundColor: '#444444',
+                    borderRadius: '4px',
+                    '&:hover': {
+                      backgroundColor: '#555555',
+                    },
+                  },
+                }}>
+                  {popularReferrals.length === 0 ? (
+                    <Typography variant="body2" sx={{ color: '#666666', textAlign: 'center', py: 2 }}>
+                      No referral codes used in this period
+                    </Typography>
+                  ) : (
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ color: '#888888', borderBottom: '1px solid #333333' }}>#</TableCell>
+                          <TableCell sx={{ color: '#888888', borderBottom: '1px solid #333333' }}>Referral Code</TableCell>
+                          <TableCell align="right" sx={{ color: '#888888', borderBottom: '1px solid #333333' }}>Uses</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {popularReferrals.slice(0, 20).map((referral, index) => (
+                          <TableRow key={referral.code} sx={{ '&:hover': { backgroundColor: '#2a2a2a' } }}>
+                            <TableCell sx={{ color: '#666666', borderBottom: '1px solid #2a2a2a' }}>
+                              {index + 1}
+                            </TableCell>
+                            <TableCell sx={{ color: '#ffffff', borderBottom: '1px solid #2a2a2a' }}>
+                              <Chip 
+                                label={referral.code} 
+                                size="small"
+                                sx={{ 
+                                  backgroundColor: index < 3 ? '#A9E5BB' : '#333333',
+                                  color: index < 3 ? '#1a1a1a' : '#ffffff',
+                                  fontWeight: index < 3 ? 600 : 400
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell align="right" sx={{ 
+                              color: index < 3 ? '#A9E5BB' : '#ffffff', 
+                              borderBottom: '1px solid #2a2a2a',
+                              fontWeight: index < 3 ? 700 : 400
+                            }}>
+                              {referral.count}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </Box>
+              </Paper>
+            </Box>
+          )}
+        </Box>
+      );
+    };
+    
+    // App Settings (Force Update) render function
+    const renderAppSettings = () => {
+      return (
+        <Box>
+          <Typography variant="h4" sx={{ color: '#ffffff', mb: 3, fontWeight: 600 }}>
+            ⚙️ App Settings
+          </Typography>
+          
+          {/* iOS Update System Management Box */}
           <Paper 
             elevation={3} 
             sx={{ 
@@ -3127,7 +3761,7 @@ const Dashboard = () => {
           >
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
               <Typography variant="h6" sx={{ color: '#ffffff', mr: 2 }}>
-                📱 iOS Update System
+                📱 iOS Force Update System
               </Typography>
               <Chip 
                 label={iosUpdateSettings.force_update_enabled ? 'Enabled' : 'Disabled'} 
@@ -3296,17 +3930,23 @@ const Dashboard = () => {
             </Box>
           </Paper>
         </Box>
-        
+      );
+    };
+
+    return (
+      <Box sx={{ width: '100%' }}>
         <Box sx={{ px: 0 }}>
-          {currentTab === 0 && renderUsers()}
-          {currentTab === 1 && renderPlayers()}
-          {currentTab === 2 && renderSupportRequests()}
-          {currentTab === 3 && renderReports()}
-          {currentTab === 4 && renderReferral()}
-          {currentTab === 5 && renderBannedUsers()}
-          {currentTab === 6 && renderEngagementPosts()}
-          {currentTab === 7 && renderEngagementComments()}
-          {currentTab === 8 && renderOnboardingAnalytics()}
+          {currentTab === 0 && renderHome()}
+          {currentTab === 1 && renderUsers()}
+          {currentTab === 2 && renderPlayers()}
+          {currentTab === 3 && renderSupportRequests()}
+          {currentTab === 4 && renderReports()}
+          {currentTab === 5 && renderReferral()}
+          {currentTab === 6 && renderBannedUsers()}
+          {currentTab === 7 && renderEngagementPosts()}
+          {currentTab === 8 && renderEngagementComments()}
+          {currentTab === 9 && renderOnboardingAnalytics()}
+          {currentTab === 10 && renderAppSettings()}
         </Box>
       </Box>
     );
@@ -3441,6 +4081,7 @@ const Dashboard = () => {
           </Box>
           <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)' }} />
           <List sx={{ overflowY: 'auto', flex: 1, px: 1 }}>
+            {/* Home */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 0}
@@ -3459,16 +4100,20 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 0 ? '#A9E5BB' : '#cccccc' }}>
-                  <PeopleIcon />
+                  <HomeIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
-                    primary={`Users (${users.length})`} 
+                    primary="Home" 
                     sx={{ color: currentTab === 0 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
             </ListItem>
+            
+            <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)', my: 1 }} />
+            
+            {/* Users */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 1}
@@ -3487,16 +4132,17 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 1 ? '#A9E5BB' : '#cccccc' }}>
-                  <AdminPanelSettingsIcon />
+                  <PeopleIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
-                    primary={`Admin (${players.length})`} 
+                    primary={`Users (${users.length})`} 
                     sx={{ color: currentTab === 1 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
             </ListItem>
+            {/* Admin */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 2}
@@ -3515,16 +4161,17 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 2 ? '#A9E5BB' : '#cccccc' }}>
-                  <SupportIcon />
+                  <AdminPanelSettingsIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
-                    primary={`Support (${supportRequests.length})`} 
+                    primary={`Admin (${players.length})`} 
                     sx={{ color: currentTab === 2 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
             </ListItem>
+            {/* Support */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 3}
@@ -3543,16 +4190,17 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 3 ? '#A9E5BB' : '#cccccc' }}>
-                  <ReportIcon />
+                  <SupportIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
-                    primary={`Reports (${reports.length})`} 
+                    primary={`Support (${supportRequests.length})`} 
                     sx={{ color: currentTab === 3 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
             </ListItem>
+            {/* Reports */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 4}
@@ -3571,16 +4219,17 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 4 ? '#A9E5BB' : '#cccccc' }}>
-                  <CardGiftcardIcon />
+                  <ReportIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
-                    primary="Referral" 
+                    primary={`Reports (${reports.length})`} 
                     sx={{ color: currentTab === 4 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
             </ListItem>
+            {/* Referral */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 5}
@@ -3599,16 +4248,17 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 5 ? '#A9E5BB' : '#cccccc' }}>
-                  <BlockIcon />
+                  <CardGiftcardIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
-                    primary={`Banned (${bannedUsers.length})`} 
+                    primary="Referral" 
                     sx={{ color: currentTab === 5 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
             </ListItem>
+            {/* Banned */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 6}
@@ -3627,16 +4277,17 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 6 ? '#A9E5BB' : '#cccccc' }}>
-                  <PostAddIcon />
+                  <BlockIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
-                    primary={`Engagement Posts (${engagementPosts.length})`} 
+                    primary={`Banned (${bannedUsers.length})`} 
                     sx={{ color: currentTab === 6 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
             </ListItem>
+            {/* Engagement Posts */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 7}
@@ -3655,16 +4306,17 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 7 ? '#A9E5BB' : '#cccccc' }}>
-                  <CommentIcon />
+                  <PostAddIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
-                    primary={`Engagement Comments (${allPosts.length})`} 
+                    primary={`Engagement Posts (${engagementPosts.length})`} 
                     sx={{ color: currentTab === 7 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
             </ListItem>
+            {/* Engagement Comments */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 8}
@@ -3683,12 +4335,73 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 8 ? '#A9E5BB' : '#cccccc' }}>
+                  <CommentIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary={`Engagement Comments (${allPosts.length})`} 
+                    sx={{ color: currentTab === 8 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            {/* Onboarding Analytics */}
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 9}
+                onClick={() => setCurrentTab(9)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 9 ? '#A9E5BB' : '#cccccc' }}>
                   <AnalyticsIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
                     primary="Onboarding Analytics" 
-                    sx={{ color: currentTab === 8 ? '#A9E5BB' : '#ffffff' }}
+                    sx={{ color: currentTab === 9 ? '#A9E5BB' : '#ffffff' }}
+                  />
+                )}
+              </ListItemButton>
+            </ListItem>
+            
+            <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)', my: 1 }} />
+            
+            {/* App Settings */}
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 10}
+                onClick={() => setCurrentTab(10)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': {
+                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
+                    },
+                  },
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                  },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 10 ? '#A9E5BB' : '#cccccc' }}>
+                  <SettingsIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText 
+                    primary="App Settings" 
+                    sx={{ color: currentTab === 10 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>

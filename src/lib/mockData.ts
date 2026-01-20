@@ -1052,6 +1052,505 @@ export const unbanUser = async (userId: string) => {
   }
 };
 
+// Home Dashboard Stats functions
+export interface UserStats {
+  total: number;
+  active: {
+    week: number;
+    month: number;
+    sixMonths: number;
+    year: number;
+    all: number;
+  };
+  inactive: {
+    week: number;
+    month: number;
+    sixMonths: number;
+    year: number;
+    all: number;
+  };
+  newActive: {
+    week: number;
+    month: number;
+    sixMonths: number;
+    year: number;
+    all: number;
+  };
+  newInactive: {
+    week: number;
+    month: number;
+    sixMonths: number;
+    year: number;
+    all: number;
+  };
+  churnRate: number; // percentage
+}
+
+export interface SubscriptionStats {
+  monthly: {
+    week: number;
+    month: number;
+    sixMonths: number;
+    year: number;
+    all: number;
+  };
+  yearly: {
+    week: number;
+    month: number;
+    sixMonths: number;
+    year: number;
+    all: number;
+  };
+  specialOffer: {
+    week: number;
+    month: number;
+    sixMonths: number;
+    year: number;
+    all: number;
+  };
+  restoredPromo: {
+    week: number;
+    month: number;
+    sixMonths: number;
+    year: number;
+    all: number;
+  };
+  free: {
+    week: number;
+    month: number;
+    sixMonths: number;
+    year: number;
+    all: number;
+  };
+}
+
+export interface SupportStats {
+  total: number;
+  open: number;
+  inProgress: number;
+  resolved: number;
+  closed: number;
+}
+
+export interface ReportStats {
+  total: number;
+  pending: number;
+  reviewed: number;
+  resolved: number;
+  dismissed: number;
+}
+
+export interface ReferralCodeStats {
+  code: string;
+  count: number;
+}
+
+export interface CommunityStats {
+  date: string;
+  posts: number;
+  comments: number;
+}
+
+export const getUserStats = async (): Promise<{ data: UserStats | null; error: any }> => {
+  try {
+    const { data: allUsers, error } = await supabase
+      .from('user_profiles')
+      .select('created_at, subscription_status, subscription_expires_at, updated_at')
+      .eq('user_type', 'normal');
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const now = new Date();
+    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sixMonthsAgo = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+    const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    
+    // Helper to check if user is currently active
+    const isUserActive = (u: any) => {
+      const status = (u.subscription_status || '').toLowerCase();
+      const expiresAt = u.subscription_expires_at ? new Date(u.subscription_expires_at) : null;
+      return status === 'active' || 
+             status === 'subscribed' || 
+             status === 'trialing' ||
+             (expiresAt && expiresAt > now);
+    };
+    
+    // Get NEW active subscriptions in period (users who signed up in period AND are currently active)
+    const getNewActiveInPeriod = (startDate: Date) => {
+      return allUsers?.filter(u => 
+        new Date(u.created_at) >= startDate && isUserActive(u)
+      ).length || 0;
+    };
+    
+    // Get users who became inactive (churned) in period
+    const getChurnedInPeriod = (startDate: Date) => {
+      return allUsers?.filter(u => {
+        const expiresAt = u.subscription_expires_at ? new Date(u.subscription_expires_at) : null;
+        // User churned if their subscription expired within this period
+        if (expiresAt && expiresAt >= startDate && expiresAt <= now && !isUserActive(u)) {
+          return true;
+        }
+        return false;
+      }).length || 0;
+    };
+    
+    // Calculate churn rate (current inactive / total * 100)
+    const totalUsers = allUsers?.length || 0;
+    const currentActive = allUsers?.filter(isUserActive).length || 0;
+    const currentInactive = allUsers?.filter(u => !isUserActive(u)).length || 0;
+    const churnRate = totalUsers > 0 ? Math.round((currentInactive / totalUsers) * 1000) / 10 : 0;
+
+    const stats: UserStats = {
+      total: totalUsers,
+      active: {
+        week: getNewActiveInPeriod(oneWeekAgo),
+        month: getNewActiveInPeriod(oneMonthAgo),
+        sixMonths: getNewActiveInPeriod(sixMonthsAgo),
+        year: getNewActiveInPeriod(oneYearAgo),
+        all: currentActive,
+      },
+      inactive: {
+        week: getChurnedInPeriod(oneWeekAgo),
+        month: getChurnedInPeriod(oneMonthAgo),
+        sixMonths: getChurnedInPeriod(sixMonthsAgo),
+        year: getChurnedInPeriod(oneYearAgo),
+        all: currentInactive,
+      },
+      newActive: {
+        week: getNewActiveInPeriod(oneWeekAgo),
+        month: getNewActiveInPeriod(oneMonthAgo),
+        sixMonths: getNewActiveInPeriod(sixMonthsAgo),
+        year: getNewActiveInPeriod(oneYearAgo),
+        all: currentActive,
+      },
+      newInactive: {
+        week: getChurnedInPeriod(oneWeekAgo),
+        month: getChurnedInPeriod(oneMonthAgo),
+        sixMonths: getChurnedInPeriod(sixMonthsAgo),
+        year: getChurnedInPeriod(oneYearAgo),
+        all: currentInactive,
+      },
+      churnRate
+    };
+
+    return { data: stats, error: null };
+  } catch (error) {
+    return { data: null, error };
+  }
+};
+
+export const getSubscriptionStats = async (): Promise<{ data: SubscriptionStats | null; error: any }> => {
+  try {
+    const { data: users, error } = await supabase
+      .from('user_profiles')
+      .select('subscription_status, subscription_product_id, created_at, subscription_expires_at')
+      .eq('user_type', 'normal');
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const now = new Date();
+    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sixMonthsAgo = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+    const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    
+    // Helper to check if subscription was active during period
+    const isActiveInPeriod = (user: any, startDate: Date) => {
+      const createdAt = new Date(user.created_at);
+      const expiresAt = user.subscription_expires_at ? new Date(user.subscription_expires_at) : null;
+      const status = (user.subscription_status || '').toLowerCase();
+      
+      // Check if subscription was active during the period
+      const wasActive = status === 'active' || 
+                       status === 'subscribed' || 
+                       status === 'trialing' ||
+                       (expiresAt && expiresAt > startDate);
+      
+      return wasActive && createdAt <= now && (!expiresAt || expiresAt >= startDate);
+    };
+    
+    // Count subscriptions by type for a given period
+    const countByTypeInPeriod = (startDate: Date | null) => {
+      const counts = {
+        monthly: 0,
+        yearly: 0,
+        specialOffer: 0,
+        restoredPromo: 0,
+        free: 0,
+      };
+      
+      users?.forEach(user => {
+        // For "all" period (startDate is null), count all active subscriptions
+        // For specific periods, check if subscription was active during that period
+        if (startDate === null) {
+          // Count all currently active subscriptions
+          const status = (user.subscription_status || '').toLowerCase();
+          const expiresAt = user.subscription_expires_at ? new Date(user.subscription_expires_at) : null;
+          const isActive = status === 'active' || 
+                         status === 'subscribed' || 
+                         status === 'trialing' ||
+                         (expiresAt && expiresAt > now);
+          if (!isActive) return;
+        } else {
+          if (!isActiveInPeriod(user, startDate)) return;
+        }
+        
+        const productId = (user.subscription_product_id || '').toLowerCase();
+        const status = (user.subscription_status || '').toLowerCase();
+        
+        if (productId.includes('monthly') || productId.includes('month')) {
+          counts.monthly++;
+        } else if (productId.includes('yearly') || productId.includes('annual') || productId.includes('year')) {
+          counts.yearly++;
+        } else if (productId.includes('special') || productId.includes('offer') || productId.includes('promo')) {
+          counts.specialOffer++;
+        } else if (status === 'restored' || productId.includes('restored')) {
+          counts.restoredPromo++;
+        } else {
+          counts.free++;
+        }
+      });
+      
+      return counts;
+    };
+
+    const stats: SubscriptionStats = {
+      monthly: {
+        week: countByTypeInPeriod(oneWeekAgo).monthly,
+        month: countByTypeInPeriod(oneMonthAgo).monthly,
+        sixMonths: countByTypeInPeriod(sixMonthsAgo).monthly,
+        year: countByTypeInPeriod(oneYearAgo).monthly,
+        all: countByTypeInPeriod(null).monthly,
+      },
+      yearly: {
+        week: countByTypeInPeriod(oneWeekAgo).yearly,
+        month: countByTypeInPeriod(oneMonthAgo).yearly,
+        sixMonths: countByTypeInPeriod(sixMonthsAgo).yearly,
+        year: countByTypeInPeriod(oneYearAgo).yearly,
+        all: countByTypeInPeriod(null).yearly,
+      },
+      specialOffer: {
+        week: countByTypeInPeriod(oneWeekAgo).specialOffer,
+        month: countByTypeInPeriod(oneMonthAgo).specialOffer,
+        sixMonths: countByTypeInPeriod(sixMonthsAgo).specialOffer,
+        year: countByTypeInPeriod(oneYearAgo).specialOffer,
+        all: countByTypeInPeriod(null).specialOffer,
+      },
+      restoredPromo: {
+        week: countByTypeInPeriod(oneWeekAgo).restoredPromo,
+        month: countByTypeInPeriod(oneMonthAgo).restoredPromo,
+        sixMonths: countByTypeInPeriod(sixMonthsAgo).restoredPromo,
+        year: countByTypeInPeriod(oneYearAgo).restoredPromo,
+        all: countByTypeInPeriod(null).restoredPromo,
+      },
+      free: {
+        week: countByTypeInPeriod(oneWeekAgo).free,
+        month: countByTypeInPeriod(oneMonthAgo).free,
+        sixMonths: countByTypeInPeriod(sixMonthsAgo).free,
+        year: countByTypeInPeriod(oneYearAgo).free,
+        all: countByTypeInPeriod(null).free,
+      },
+    };
+
+    return { data: stats, error: null };
+  } catch (error) {
+    return { data: null, error };
+  }
+};
+
+export const getSupportStats = async (): Promise<{ data: SupportStats | null; error: any }> => {
+  try {
+    const { data: requests, error } = await supabase
+      .from('support_requests')
+      .select('status');
+
+    if (error) {
+      console.error('Error fetching support stats from support_requests table:', error);
+      return { data: null, error };
+    }
+
+    console.log('Support requests fetched from support_requests table:', requests?.length, 'records');
+
+    const stats: SupportStats = {
+      total: requests?.length || 0,
+      open: requests?.filter(r => r.status === 'open').length || 0,
+      inProgress: requests?.filter(r => r.status === 'in_progress').length || 0,
+      resolved: requests?.filter(r => r.status === 'resolved').length || 0,
+      closed: requests?.filter(r => r.status === 'closed').length || 0,
+    };
+
+    return { data: stats, error: null };
+  } catch (error) {
+    console.error('Exception in getSupportStats:', error);
+    return { data: null, error };
+  }
+};
+
+export const getReportStats = async (): Promise<{ data: ReportStats | null; error: any }> => {
+  try {
+    const { data: reports, error } = await supabase
+      .from('community_reports')
+      .select('status');
+
+    if (error) {
+      console.error('Error fetching report stats from community_reports table:', error);
+      return { data: null, error };
+    }
+
+    console.log('Reports fetched from community_reports table:', reports?.length, 'records');
+
+    const stats: ReportStats = {
+      total: reports?.length || 0,
+      pending: reports?.filter(r => r.status === 'pending').length || 0,
+      reviewed: reports?.filter(r => r.status === 'reviewed').length || 0,
+      resolved: reports?.filter(r => r.status === 'resolved').length || 0,
+      dismissed: reports?.filter(r => r.status === 'dismissed').length || 0,
+    };
+
+    return { data: stats, error: null };
+  } catch (error) {
+    console.error('Exception in getReportStats:', error);
+    return { data: null, error };
+  }
+};
+
+export const getPopularReferralCodes = async (period: 'week' | 'month' | 'sixMonths' | 'year' | 'all'): Promise<{ data: ReferralCodeStats[] | null; error: any }> => {
+  try {
+    let dateFilter: Date | null = null;
+    const now = new Date();
+
+    switch (period) {
+      case 'week':
+        dateFilter = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case 'month':
+        dateFilter = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case 'sixMonths':
+        dateFilter = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+        break;
+      case 'year':
+        dateFilter = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        dateFilter = null;
+    }
+
+    let query = supabase
+      .from('user_profiles')
+      .select('referral_code, created_at')
+      .not('referral_code', 'is', null)
+      .not('referral_code', 'eq', '');
+
+    const { data: users, error } = await query;
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    // Filter by date if needed
+    const filteredUsers = dateFilter 
+      ? users?.filter(u => new Date(u.created_at) >= dateFilter!) 
+      : users;
+
+    // Count occurrences of each referral code
+    const codeCounts = new Map<string, number>();
+    filteredUsers?.forEach(user => {
+      if (user.referral_code) {
+        codeCounts.set(user.referral_code, (codeCounts.get(user.referral_code) || 0) + 1);
+      }
+    });
+
+    // Convert to array and sort by count descending
+    const stats: ReferralCodeStats[] = Array.from(codeCounts.entries())
+      .map(([code, count]) => ({ code, count }))
+      .sort((a, b) => b.count - a.count);
+
+    return { data: stats, error: null };
+  } catch (error) {
+    return { data: null, error };
+  }
+};
+
+export const getCommunityStats = async (period: 'day' | 'threeDay' | 'week' | 'month'): Promise<{ data: CommunityStats[] | null; error: any }> => {
+  try {
+    const now = new Date();
+    let startDate: Date;
+    let intervalDays: number;
+
+    switch (period) {
+      case 'day':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        intervalDays = 1;
+        break;
+      case 'threeDay':
+        startDate = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+        intervalDays = 3;
+        break;
+      case 'week':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        intervalDays = 7;
+        break;
+      case 'month':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        intervalDays = 30;
+        break;
+    }
+
+    const [postsResult, commentsResult] = await Promise.all([
+      supabase
+        .from('community_posts')
+        .select('created_at')
+        .gte('created_at', startDate.toISOString()),
+      supabase
+        .from('community_comments')
+        .select('created_at')
+        .gte('created_at', startDate.toISOString())
+    ]);
+
+    if (postsResult.error || commentsResult.error) {
+      return { data: null, error: postsResult.error || commentsResult.error };
+    }
+
+    // Group by day
+    const statsMap = new Map<string, CommunityStats>();
+    
+    // Initialize all days in range
+    for (let i = 0; i < intervalDays; i++) {
+      const date = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
+      const dateKey = date.toISOString().split('T')[0];
+      statsMap.set(dateKey, { date: dateKey, posts: 0, comments: 0 });
+    }
+
+    // Count posts per day
+    postsResult.data?.forEach(post => {
+      const dateKey = new Date(post.created_at).toISOString().split('T')[0];
+      if (statsMap.has(dateKey)) {
+        statsMap.get(dateKey)!.posts++;
+      }
+    });
+
+    // Count comments per day
+    commentsResult.data?.forEach(comment => {
+      const dateKey = new Date(comment.created_at).toISOString().split('T')[0];
+      if (statsMap.has(dateKey)) {
+        statsMap.get(dateKey)!.comments++;
+      }
+    });
+
+    const stats = Array.from(statsMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+
+    return { data: stats, error: null };
+  } catch (error) {
+    return { data: null, error };
+  }
+};
+
 // Onboarding Analytics functions
 export const getOnboardingAnalytics = async () => {
   try {
