@@ -875,6 +875,11 @@ const Dashboard = () => {
       };
       setBannedUsers(prevBanned => [bannedUser, ...prevBanned]);
       
+      // If we're viewing this user in report details, refresh their data
+      if (reportedUser && reportedUser.id === userToBan.id) {
+        setReportedUser(bannedUser);
+      }
+      
       // Close modal
       setBanUserModalOpen(false);
       setUserToBan(null);
@@ -907,6 +912,45 @@ const Dashboard = () => {
       
     } catch (error) {
       console.error('Error in handleUnbanUser:', error);
+      alert('Failed to unban user');
+    } finally {
+      setUnbanningUser(false);
+    }
+  };
+
+  // Ban/Unban user from report details
+  const handleOpenBanDialogFromReport = (user: any) => {
+    setUserToBan(user);
+    setBanReason('');
+    setBanType('permanent');
+    setBanUntil('');
+    setBanUserModalOpen(true);
+  };
+
+  const handleUnbanUserFromReport = async (userId: string) => {
+    setUnbanningUser(true);
+    try {
+      const { error } = await unbanUser(userId);
+      
+      if (error) {
+        console.error('Error unbanning user:', error);
+        alert('Failed to unban user');
+        return;
+      }
+      
+      alert('User unbanned from community features successfully!');
+      
+      // Refresh the reported user data
+      const { data: updatedUser } = await getUserById(userId);
+      if (updatedUser) {
+        setReportedUser(updatedUser);
+      }
+      
+      // Update local state - remove from banned users
+      setBannedUsers(prevBanned => prevBanned.filter(bannedUser => bannedUser.id !== userId));
+      
+    } catch (error) {
+      console.error('Error in handleUnbanUserFromReport:', error);
       alert('Failed to unban user');
     } finally {
       setUnbanningUser(false);
@@ -5702,42 +5746,131 @@ const Dashboard = () => {
                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                        <CircularProgress sx={{ color: '#FFB385' }} />
                      </Box>
-                   ) : reportedUser ? (
-                     <Box>
-                       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-                         <Avatar 
-                           sx={{ 
-                             bgcolor: getAvatarColor(reportedUser.username || reportedUser.email), 
-                             width: 80, 
-                             height: 80, 
-                             mr: 3,
-                             fontSize: '2rem'
-                           }}
-                         >
-                           {getInitials(reportedUser.username || reportedUser.email)}
-                         </Avatar>
-                         <Box>
-                           <Typography variant="h4" sx={{ color: '#ffffff', fontWeight: 'bold', mb: 1 }}>
-                             @{reportedUser.username || generateUsername(reportedUser.email)}
-                           </Typography>
-                           <Typography variant="body1" sx={{ color: '#cccccc' }}>
-                             User ID: {reportedUser.id}
-                           </Typography>
-                           {reportedUser.name && (
-                             <Typography variant="body1" sx={{ color: '#cccccc' }}>
-                               Name: {reportedUser.name}
-                             </Typography>
-                           )}
-                           {reportedUser.user_type && (
-                             <Typography variant="body1" sx={{ color: '#cccccc' }}>
-                               User Type: {reportedUser.user_type}
-                             </Typography>
-                           )}
-                         </Box>
-                       </Box>
-                       
+                  ) : reportedUser ? (
+                    <Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                        <Avatar 
+                          sx={{ 
+                            bgcolor: getAvatarColor(reportedUser.username || reportedUser.email), 
+                            width: 80, 
+                            height: 80, 
+                            mr: 3,
+                            fontSize: '2rem'
+                          }}
+                        >
+                          {getInitials(reportedUser.username || reportedUser.email)}
+                        </Avatar>
+                        <Box sx={{ flex: 1 }}>
+                          <Typography variant="h4" sx={{ color: '#ffffff', fontWeight: 'bold', mb: 1 }}>
+                            @{reportedUser.username || generateUsername(reportedUser.email)}
+                          </Typography>
+                          <Typography variant="body1" sx={{ color: '#cccccc' }}>
+                            User ID: {reportedUser.id}
+                          </Typography>
+                          {reportedUser.name && (
+                            <Typography variant="body1" sx={{ color: '#cccccc' }}>
+                              Name: {reportedUser.name}
+                            </Typography>
+                          )}
+                          {reportedUser.user_type && (
+                            <Typography variant="body1" sx={{ color: '#cccccc' }}>
+                              User Type: {reportedUser.user_type}
+                            </Typography>
+                          )}
+                          {reportedUser.community_banned && (
+                            <Chip 
+                              label="BANNED" 
+                              color="error" 
+                              size="small" 
+                              sx={{ mt: 1 }}
+                            />
+                          )}
+                        </Box>
+                      </Box>
+                      
+                      {/* Account Details Grid */}
+                      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2, mb: 3 }}>
+                        <Box sx={{ backgroundColor: '#2a2a2a', p: 2, borderRadius: 1 }}>
+                          <Typography variant="caption" sx={{ color: '#888888' }}>
+                            Account Created
+                          </Typography>
+                          <Typography variant="body1" sx={{ color: '#ffffff', fontWeight: 600 }}>
+                            {reportedUser.created_at ? new Date(reportedUser.created_at).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric'
+                            }) : 'N/A'}
+                          </Typography>
+                        </Box>
+                        
+                        <Box sx={{ backgroundColor: '#2a2a2a', p: 2, borderRadius: 1 }}>
+                          <Typography variant="caption" sx={{ color: '#888888' }}>
+                            Subscription Status
+                          </Typography>
+                          <Typography variant="body1" sx={{ color: '#ffffff', fontWeight: 600 }}>
+                            {reportedUser.subscription_status || 'Free'}
+                          </Typography>
+                        </Box>
+                        
+                        {reportedUser.referral_code && (
+                          <Box sx={{ backgroundColor: '#2a2a2a', p: 2, borderRadius: 1 }}>
+                            <Typography variant="caption" sx={{ color: '#888888' }}>
+                              Referral Code
+                            </Typography>
+                            <Typography variant="body1" sx={{ color: '#ffffff', fontWeight: 600 }}>
+                              {reportedUser.referral_code}
+                            </Typography>
+                          </Box>
+                        )}
+                        
+                        {reportedUser.community_banned && reportedUser.ban_reason && (
+                          <Box sx={{ backgroundColor: '#2a2a2a', p: 2, borderRadius: 1 }}>
+                            <Typography variant="caption" sx={{ color: '#888888' }}>
+                              Ban Reason
+                            </Typography>
+                            <Typography variant="body1" sx={{ color: '#ff5252', fontWeight: 600 }}>
+                              {reportedUser.ban_reason}
+                            </Typography>
+                          </Box>
+                        )}
+                      </Box>
+                      
+                      {/* Ban/Unban Button */}
+                      <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>
+                        {reportedUser.community_banned ? (
+                          <Button
+                            variant="contained"
+                            onClick={() => handleUnbanUserFromReport(reportedUser.id)}
+                            sx={{
+                              backgroundColor: '#4caf50',
+                              color: '#ffffff',
+                              '&:hover': {
+                                backgroundColor: '#45a049',
+                              },
+                              fontWeight: 'bold',
+                            }}
+                          >
+                            Unban User
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="contained"
+                            onClick={() => handleOpenBanDialogFromReport(reportedUser)}
+                            sx={{
+                              backgroundColor: '#ff5252',
+                              color: '#ffffff',
+                              '&:hover': {
+                                backgroundColor: '#ff3838',
+                              },
+                              fontWeight: 'bold',
+                            }}
+                          >
+                            <BlockIcon sx={{ mr: 1 }} /> Ban User
+                          </Button>
+                        )}
+                      </Box>
 
-                     </Box>
+                    </Box>
                    ) : (
                      <Box sx={{ textAlign: 'center', py: 2, color: '#cccccc' }}>
                        User details not available
