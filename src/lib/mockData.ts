@@ -1,4 +1,4 @@
-import { supabase, UserProfile, SupportRequest, CommunityReport } from './supabase';
+import { supabase, UserProfile, SupportRequest } from './supabase';
 
 export interface User {
   id: string;
@@ -241,7 +241,7 @@ export const testNetworkConnection = async () => {
     
     // Just test if we can reach the Supabase URL
     const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
-    const response = await fetch(`${supabaseUrl}/rest/v1/`, { 
+    await fetch(`${supabaseUrl}/rest/v1/`, { 
       method: 'HEAD',
       signal: controller.signal
     });

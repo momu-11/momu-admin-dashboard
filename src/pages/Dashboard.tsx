@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Box, Container, Paper, Alert, Typography, CircularProgress, Tabs, Tab, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button, AppBar, Toolbar, TextField, Card, CardContent, Avatar, Dialog, DialogTitle, DialogContent, IconButton, Pagination, Select, MenuItem, FormControl, ImageList, ImageListItem, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Switch, FormControlLabel } from '@mui/material';
+import { Box, Container, Paper, Alert, Typography, CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button, AppBar, Toolbar, TextField, Card, CardContent, Avatar, Dialog, DialogTitle, DialogContent, IconButton, Pagination, Select, MenuItem, FormControl, ImageList, ImageListItem, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Switch, FormControlLabel } from '@mui/material';
 import { Close as CloseIcon, Visibility as VisibilityIcon, CalendarToday as CalendarIcon, Delete as DeleteIcon, Menu as MenuIcon, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, People as PeopleIcon, AdminPanelSettings as AdminPanelSettingsIcon, Support as SupportIcon, Report as ReportIcon, CardGiftcard as CardGiftcardIcon, Block as BlockIcon, PostAdd as PostAddIcon, Comment as CommentIcon, Analytics as AnalyticsIcon, Home as HomeIcon, Settings as SettingsIcon, TrendingUp as TrendingUpIcon } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { Navigate } from 'react-router-dom';
@@ -258,7 +258,6 @@ const Dashboard = () => {
   
   // Banned users state
   const [bannedUsers, setBannedUsers] = useState<any[]>([]);
-  const [bannedUsersLoading, setBannedUsersLoading] = useState<boolean>(false);
   const [bannedUsersPage, setBannedUsersPage] = useState<number>(1);
   const [bannedUsersSearchTerm, setBannedUsersSearchTerm] = useState<string>('');
   const [banReason, setBanReason] = useState<string>('');
@@ -324,6 +323,7 @@ const Dashboard = () => {
     }
   };
   
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleReportStatusToggle = async (reportId: string, currentStatus: string) => {
     try {
       const newStatus = currentStatus === 'resolved' ? 'pending' : 'resolved';
@@ -986,7 +986,7 @@ const Dashboard = () => {
       
       const status = newEngagementPost.delayHours > 0 ? 'scheduled' : 'active';
 
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('community_posts')
         .insert({
           author_id: user.id,
@@ -1247,7 +1247,7 @@ const Dashboard = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('community_comments')
         .insert({
           post_id: selectedPostForComments.id,
@@ -1376,7 +1376,7 @@ const Dashboard = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('community_comments')
         .insert({
           post_id: selectedPostForCommenting.id,
@@ -1465,6 +1465,7 @@ const Dashboard = () => {
     } finally {
       setDataLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
   // Onboarding Analytics functions
@@ -3138,6 +3139,7 @@ const Dashboard = () => {
                       const completionRate = step.completion_rate;
                       const isLowRate = completionRate < 50;
                       const isMediumRate = completionRate >= 50 && completionRate < 75;
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
                       const isHighRate = completionRate >= 75;
                       
                       return (
