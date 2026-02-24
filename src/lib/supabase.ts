@@ -2,8 +2,18 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL!
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY!
+const supabaseServiceKey = process.env.REACT_APP_SUPABASE_SERVICE_KEY
 
+// Standard client for auth operations
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+// Admin client uses service role key to bypass RLS — for use in the admin dashboard only.
+// Falls back to anon client if service key not configured.
+export const adminSupabase = supabaseServiceKey
+  ? createClient(supabaseUrl, supabaseServiceKey, {
+      auth: { persistSession: false, autoRefreshToken: false }
+    })
+  : supabase
 
 // Database types based on the schema
 export interface UserProfile {

@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Box, Container, Paper, Alert, Typography, CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button, AppBar, Toolbar, TextField, Card, CardContent, Avatar, Dialog, DialogTitle, DialogContent, IconButton, Pagination, Select, MenuItem, FormControl, ImageList, ImageListItem, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Switch, FormControlLabel } from '@mui/material';
-import { Close as CloseIcon, Visibility as VisibilityIcon, CalendarToday as CalendarIcon, Delete as DeleteIcon, Menu as MenuIcon, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, People as PeopleIcon, AdminPanelSettings as AdminPanelSettingsIcon, Support as SupportIcon, Report as ReportIcon, CardGiftcard as CardGiftcardIcon, Block as BlockIcon, PostAdd as PostAddIcon, Comment as CommentIcon, Analytics as AnalyticsIcon, Home as HomeIcon, Settings as SettingsIcon, TrendingUp as TrendingUpIcon } from '@mui/icons-material';
+import { Box, Container, Paper, Alert, Typography, CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button, AppBar, Toolbar, TextField, Card, CardContent, Avatar, Dialog, DialogTitle, DialogContent, IconButton, Pagination, Select, MenuItem, FormControl, ImageList, ImageListItem, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Switch, FormControlLabel, LinearProgress } from '@mui/material';
+import { Close as CloseIcon, Visibility as VisibilityIcon, CalendarToday as CalendarIcon, Delete as DeleteIcon, Menu as MenuIcon, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, People as PeopleIcon, AdminPanelSettings as AdminPanelSettingsIcon, Support as SupportIcon, Report as ReportIcon, CardGiftcard as CardGiftcardIcon, Block as BlockIcon, PostAdd as PostAddIcon, Analytics as AnalyticsIcon, Home as HomeIcon, Settings as SettingsIcon, TrendingUp as TrendingUpIcon } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { Navigate } from 'react-router-dom';
 import { supabase, getUsers, getPlayers, getSupportRequests, getReports, getUserPosts, getUserComments, deletePost, deleteComment, sendNotification, getUserNotifications, updateSupportRequestStatus, updateReportStatus, deleteReport, getReferralCodes, getReferralRedemptions, deleteSupportRequest, getUserById, getBannedUsers, banUser, unbanUser, getOnboardingAnalytics, getUserStats, getSubscriptionStats, getSupportStats, getReportStats, getPopularReferralCodes, getCommunityStats, UserStats, SubscriptionStats, SupportStats, ReportStats, ReferralCodeStats, CommunityStats } from '../lib/mockData';
-import { getSupportScreenshotUrl } from '../lib/supabase';
+import { adminSupabase, getSupportScreenshotUrl } from '../lib/supabase';
 
 // Screenshot Display Component
 const ScreenshotDisplay = ({ screenshotPath }: { screenshotPath: string }) => {
@@ -187,6 +187,7 @@ const Dashboard = () => {
   const [creatingEngagementPost, setCreatingEngagementPost] = useState<boolean>(false);
   const [scheduledPosts, setScheduledPosts] = useState<any[]>([]);
   const [showScheduledPosts, setShowScheduledPosts] = useState<boolean>(false);
+  const [createPostExpanded, setCreatePostExpanded] = useState<boolean>(false);
   const [scheduledPostsLoading, setScheduledPostsLoading] = useState<boolean>(false);
   const [editingLikeCount, setEditingLikeCount] = useState<string | null>(null);
   const [newLikeCount, setNewLikeCount] = useState<number>(0);
@@ -218,6 +219,7 @@ const Dashboard = () => {
   const [allPosts, setAllPosts] = useState<any[]>([]);
   const [allPostsLoading, setAllPostsLoading] = useState<boolean>(false);
   const [postFilter, setPostFilter] = useState<'all' | 'engagement'>('all');
+  const [communityPostFilter, setCommunityPostFilter] = useState<'all' | 'real' | 'engagement'>('all');
   const [selectedPostForCommenting, setSelectedPostForCommenting] = useState<any>(null);
   const [commentModalOpen, setCommentModalOpen] = useState<boolean>(false);
   const [newComment, setNewComment] = useState({
@@ -227,6 +229,21 @@ const Dashboard = () => {
     likeCount: 0
   });
   const [creatingComment, setCreatingComment] = useState<boolean>(false);
+
+  // AI Content Automation state
+  const [aiContentSettings, setAiContentSettings] = useState<any>({
+    posts_enabled: false,
+    comments_enabled: false,
+    posts_per_day: 2,
+    comments_per_post_min: 3,
+    comments_per_post_max: 5,
+    comment_target: 'ai_only',
+    persona_pool_initialized: false
+  });
+  const [aiSettingsLoading, setAiSettingsLoading] = useState<boolean>(false);
+  const [aiSettingsSaving, setAiSettingsSaving] = useState<boolean>(false);
+  const [aiTestGenerating, setAiTestGenerating] = useState<boolean>(false);
+  const [aiTestGeneratingType, setAiTestGeneratingType] = useState<'post' | 'comment' | null>(null);
   
   // Support request modal state
   const [selectedSupportRequest, setSelectedSupportRequest] = useState<any>(null);
@@ -628,7 +645,7 @@ const Dashboard = () => {
       // First, delete the screenshot from storage if it exists
       if (selectedSupportRequest.has_screenshot && selectedSupportRequest.screenshot_path) {
         try {
-          const { error: storageError } = await supabase.storage
+          const { error: storageError } = await adminSupabase.storage
             .from('support-imgs')
             .remove([selectedSupportRequest.screenshot_path]);
           
@@ -961,13 +978,9 @@ const Dashboard = () => {
   const fetchEngagementPosts = useCallback(async () => {
     setEngagementPostsLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data, error } = await supabase
+      const { data, error } = await adminSupabase
         .from('community_posts')
         .select('*')
-        .eq('author_id', user.id)
         .not('display_username', 'is', null)
         .eq('status', 'active')
         .order('created_at', { ascending: false });
@@ -977,7 +990,26 @@ const Dashboard = () => {
         return;
       }
 
-      setEngagementPosts(data || []);
+      const posts = data || [];
+
+      // Fetch AI comment counts per post
+      if (posts.length > 0) {
+        const postIds = posts.map((p: any) => p.id);
+        const { data: aiComments } = await adminSupabase
+          .from('community_comments')
+          .select('post_id')
+          .in('post_id', postIds)
+          .eq('is_ai_generated', true);
+
+        const aiCountMap: Record<string, number> = {};
+        (aiComments || []).forEach((c: any) => {
+          aiCountMap[c.post_id] = (aiCountMap[c.post_id] || 0) + 1;
+        });
+
+        setEngagementPosts(posts.map((p: any) => ({ ...p, ai_comment_count: aiCountMap[p.id] || 0 })));
+      } else {
+        setEngagementPosts([]);
+      }
     } catch (error) {
       console.error('Error in fetchEngagementPosts:', error);
     } finally {
@@ -988,13 +1020,9 @@ const Dashboard = () => {
   const fetchScheduledPosts = useCallback(async () => {
     setScheduledPostsLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data, error } = await supabase
+      const { data, error } = await adminSupabase
         .from('community_posts')
         .select('*')
-        .eq('author_id', user.id)
         .not('display_username', 'is', null)
         .eq('status', 'scheduled')
         .order('scheduled_at', { ascending: true });
@@ -1020,9 +1048,6 @@ const Dashboard = () => {
 
     setCreatingEngagementPost(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
       const now = new Date();
       const scheduledAt = newEngagementPost.delayHours > 0 
         ? new Date(now.getTime() + (newEngagementPost.delayHours * 60 * 60 * 1000))
@@ -1030,12 +1055,26 @@ const Dashboard = () => {
       
       const status = newEngagementPost.delayHours > 0 ? 'scheduled' : 'active';
 
-      const { error } = await supabase
+      // Fetch the real admin user ID from the database
+      const { data: adminUserData } = await adminSupabase
+        .from('user_profiles')
+        .select('id')
+        .eq('user_type', 'admin')
+        .limit(1)
+        .single();
+      const adminUserId = adminUserData?.id;
+      if (!adminUserId) {
+        alert('Could not find admin user in database. Please ensure an admin user is set up.');
+        return;
+      }
+
+      const { error } = await adminSupabase
         .from('community_posts')
         .insert({
-          author_id: user.id,
+          author_id: adminUserId,
           content: newEngagementPost.content,
           display_username: newEngagementPost.username,
+          avatar_color: newEngagementPost.avatarColor,
           display_avatar_color: newEngagementPost.avatarColor,
           like_count: newEngagementPost.likeCount,
           comment_count: 0,
@@ -1102,6 +1141,23 @@ const Dashboard = () => {
     }
   };
 
+  const handleDeleteCommunityPost = async (postId: string) => {
+    if (!window.confirm('Delete this post? This cannot be undone.')) return;
+    try {
+      const { error } = await adminSupabase
+        .from('community_posts')
+        .delete()
+        .eq('id', postId);
+      if (error) {
+        alert('Failed to delete post');
+        return;
+      }
+      await fetchCommunityPosts();
+    } catch {
+      alert('Failed to delete post');
+    }
+  };
+
   const handleUpdateLikeCount = async (postId: string) => {
     try {
       const { error } = await supabase
@@ -1154,40 +1210,57 @@ const Dashboard = () => {
     }
   };
 
+  const fetchCommunityPosts = useCallback(async () => {
+    setAllPostsLoading(true);
+    try {
+      const { data, error } = await adminSupabase
+        .from('community_posts')
+        .select('*')
+        .eq('status', 'active')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching community posts:', error);
+        return;
+      }
+
+      const posts = data || [];
+
+      if (posts.length > 0) {
+        const postIds = posts.map((p: any) => p.id);
+        const { data: aiComments } = await adminSupabase
+          .from('community_comments')
+          .select('post_id')
+          .in('post_id', postIds)
+          .eq('is_ai_generated', true);
+
+        const aiCountMap: Record<string, number> = {};
+        (aiComments || []).forEach((c: any) => {
+          aiCountMap[c.post_id] = (aiCountMap[c.post_id] || 0) + 1;
+        });
+
+        setAllPosts(posts.map((p: any) => ({ ...p, ai_comment_count: aiCountMap[p.id] || 0 })));
+      } else {
+        setAllPosts([]);
+      }
+    } catch (error) {
+      console.error('Error in fetchCommunityPosts:', error);
+    } finally {
+      setAllPostsLoading(false);
+    }
+  }, []);
+
   const checkAndActivateScheduledPosts = useCallback(async () => {
     try {
       const now = new Date();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
 
-      // Try to use the edge function first (if available)
-      try {
-        const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/activate-scheduled-posts`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (response.ok) {
-          const result = await response.json();
-          console.log('Edge function activated posts:', result);
-          // Refresh lists after edge function runs
-          await fetchEngagementPosts();
-          await fetchScheduledPosts();
-          return;
-        }
-      } catch (edgeFunctionError) {
-        console.log('Edge function not available, falling back to client-side check');
-      }
-
-      // Fallback to client-side check
-      const { data: overduePosts, error } = await supabase
+      // Fallback to client-side check using adminSupabase (bypasses RLS)
+      const { data: overduePosts, error } = await adminSupabase
         .from('community_posts')
         .select('*')
-        .eq('author_id', user.id)
+        .not('display_username', 'is', null)
         .eq('status', 'scheduled')
+        .not('scheduled_at', 'is', null)
         .lte('scheduled_at', now.toISOString());
 
       if (error) {
@@ -1196,22 +1269,19 @@ const Dashboard = () => {
       }
 
       if (overduePosts && overduePosts.length > 0) {
-        // Activate overdue posts
-        const { error: updateError } = await supabase
+        const { error: updateError } = await adminSupabase
           .from('community_posts')
           .update({ status: 'active' })
           .in('id', overduePosts.map(post => post.id));
 
         if (!updateError) {
-          // Refresh both lists
-          await fetchEngagementPosts();
-          await fetchScheduledPosts();
+          await Promise.all([fetchEngagementPosts(), fetchScheduledPosts(), fetchCommunityPosts()]);
         }
       }
     } catch (error) {
       console.error('Error in checkAndActivateScheduledPosts:', error);
     }
-  }, [fetchEngagementPosts, fetchScheduledPosts]);
+  }, [fetchEngagementPosts, fetchScheduledPosts, fetchCommunityPosts]);
 
   const handleDeleteScheduledPost = async (postId: string) => {
     if (!window.confirm('Are you sure you want to delete this scheduled post?')) {
@@ -1219,7 +1289,7 @@ const Dashboard = () => {
     }
 
     try {
-      const { error } = await supabase
+      const { error } = await adminSupabase
         .from('community_posts')
         .delete()
         .eq('id', postId);
@@ -1230,12 +1300,28 @@ const Dashboard = () => {
         return;
       }
 
-      // Refresh scheduled posts
       await fetchScheduledPosts();
-      alert('Scheduled post deleted successfully!');
     } catch (error) {
       console.error('Error in handleDeleteScheduledPost:', error);
       alert('Failed to delete scheduled post');
+    }
+  };
+
+  const handlePublishScheduledPostNow = async (postId: string) => {
+    try {
+      const { error } = await adminSupabase
+        .from('community_posts')
+        .update({ status: 'active', scheduled_at: null })
+        .eq('id', postId);
+
+      if (error) {
+        alert('Failed to publish post');
+        return;
+      }
+
+      await Promise.all([fetchScheduledPosts(), fetchEngagementPosts(), fetchCommunityPosts()]);
+    } catch {
+      alert('Failed to publish post');
     }
   };
 
@@ -1243,7 +1329,7 @@ const Dashboard = () => {
   const fetchPostComments = async (postId: string) => {
     setPostCommentsLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await adminSupabase
         .from('community_comments')
         .select('*')
         .eq('post_id', postId)
@@ -1288,16 +1374,19 @@ const Dashboard = () => {
 
     setCreatingEngagementComment(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: adminUserData } = await adminSupabase
+        .from('user_profiles').select('id').eq('user_type', 'admin').limit(1).single();
+      const adminUserId = adminUserData?.id;
+      if (!adminUserId) { alert('Could not find admin user in database.'); return; }
 
-      const { error } = await supabase
+      const { error } = await adminSupabase
         .from('community_comments')
         .insert({
           post_id: selectedPostForComments.id,
-          author_id: user.id,
+          author_id: adminUserId,
           content: newEngagementComment.content,
           display_username: newEngagementComment.username,
+          avatar_color: newEngagementComment.avatarColor,
           display_avatar_color: newEngagementComment.avatarColor,
           like_count: newEngagementComment.likeCount
         })
@@ -1330,19 +1419,15 @@ const Dashboard = () => {
   };
 
   const handleDeleteEngagementComment = async (commentId: string) => {
-    if (!window.confirm('Are you sure you want to delete this engagement comment?')) {
-      return;
-    }
-
     try {
-      const { error } = await supabase
+      const { error } = await adminSupabase
         .from('community_comments')
         .delete()
         .eq('id', commentId);
 
       if (error) {
         console.error('Error deleting engagement comment:', error);
-        alert('Failed to delete engagement comment');
+        alert('Failed to delete comment');
         return;
       }
 
@@ -1350,10 +1435,9 @@ const Dashboard = () => {
       if (selectedPostForComments) {
         await fetchPostComments(selectedPostForComments.id);
       }
-      alert('Engagement comment deleted successfully!');
     } catch (error) {
       console.error('Error in handleDeleteEngagementComment:', error);
-      alert('Failed to delete engagement comment');
+      alert('Failed to delete comment');
     }
   };
 
@@ -1361,19 +1445,14 @@ const Dashboard = () => {
   const fetchAllPosts = useCallback(async () => {
     setAllPostsLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      let query = supabase
+      let query = adminSupabase
         .from('community_posts')
         .select('*')
         .eq('status', 'active')
         .order('created_at', { ascending: false });
 
       if (postFilter === 'engagement') {
-        query = query
-          .eq('author_id', user.id)
-          .not('display_username', 'is', null);
+        query = query.not('display_username', 'is', null);
       }
 
       const { data, error } = await query;
@@ -1417,14 +1496,16 @@ const Dashboard = () => {
 
     setCreatingComment(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: adminUserData2 } = await adminSupabase
+        .from('user_profiles').select('id').eq('user_type', 'admin').limit(1).single();
+      const adminUserId2 = adminUserData2?.id;
+      if (!adminUserId2) { alert('Could not find admin user in database.'); return; }
 
-      const { error } = await supabase
+      const { error } = await adminSupabase
         .from('community_comments')
         .insert({
           post_id: selectedPostForCommenting.id,
-          author_id: user.id,
+          author_id: adminUserId2,
           content: newComment.content,
           display_username: newComment.username,
           display_avatar_color: newComment.avatarColor,
@@ -1710,35 +1791,153 @@ const Dashboard = () => {
       current_version: version
     }));
   };
+
+  // AI Content Automation Functions
+  const fetchAIContentSettings = useCallback(async () => {
+    setAiSettingsLoading(true);
+    try {
+      const { data, error } = await adminSupabase
+        .from('app_settings')
+        .select('setting_value')
+        .eq('setting_key', 'ai_content_automation')
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          console.log('No AI settings found, using defaults');
+        } else {
+          console.error('Error fetching AI settings:', error);
+        }
+      } else if (data) {
+        setAiContentSettings(data.setting_value);
+      }
+    } catch (error) {
+      console.error('Error in fetchAIContentSettings:', error);
+    } finally {
+      setAiSettingsLoading(false);
+    }
+  }, []);
+
+  const saveAIContentSettings = async (updatedSettings?: any) => {
+    setAiSettingsSaving(true);
+    try {
+      const settingsToSave = updatedSettings || aiContentSettings;
+
+      const { error } = await adminSupabase
+        .from('app_settings')
+        .upsert({
+          setting_key: 'ai_content_automation',
+          setting_value: settingsToSave,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'setting_key'
+        });
+
+      if (error) throw error;
+
+      setAiContentSettings(settingsToSave);
+
+      const successMessage = document.createElement('div');
+      successMessage.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #4caf50; color: white; padding: 16px 24px; border-radius: 8px; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);';
+      successMessage.textContent = '\u2713 AI settings saved successfully';
+      document.body.appendChild(successMessage);
+      setTimeout(() => successMessage.remove(), 3000);
+    } catch (error: any) {
+      console.error('Error saving AI settings:', error);
+      alert(`Failed to save AI settings: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setAiSettingsSaving(false);
+    }
+  };
+
+  const handleToggleAIPosts = async () => {
+    const newSettings = {
+      ...aiContentSettings,
+      posts_enabled: !aiContentSettings.posts_enabled
+    };
+    await saveAIContentSettings(newSettings);
+  };
+
+  const handleToggleAIComments = async () => {
+    const newSettings = {
+      ...aiContentSettings,
+      comments_enabled: !aiContentSettings.comments_enabled
+    };
+    await saveAIContentSettings(newSettings);
+  };
+
+  const handleTestGeneratePost = async () => {
+    setAiTestGenerating(true);
+    setAiTestGeneratingType('post');
+    try {
+      const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/generate-ai-content`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ test: true, type: 'post' })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to generate test post');
+      }
+
+      await Promise.all([fetchEngagementPosts(), fetchScheduledPosts(), fetchCommunityPosts()]);
+      alert(`Test post generated! Post is now live in Community Posts.`);
+    } catch (error: any) {
+      console.error('Error generating test post:', error);
+      alert(`Failed to generate test post: ${error.message}`);
+    } finally {
+      setAiTestGenerating(false);
+      setAiTestGeneratingType(null);
+    }
+  };
+
+  const handleTestGenerateComment = async () => {
+    setAiTestGenerating(true);
+    setAiTestGeneratingType('comment');
+    try {
+      const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/generate-ai-content`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ test: true, type: 'comment' })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to generate test comment');
+      }
+
+      await fetchAllPosts();
+      alert(`Test comment generated! ${result.commentsGenerated} comment created.`);
+    } catch (error: any) {
+      console.error('Error generating test comment:', error);
+      alert(`Failed to generate test comment: ${error.message}`);
+    } finally {
+      setAiTestGenerating(false);
+      setAiTestGeneratingType(null);
+    }
+  };
+
   
-  // Check Supabase connection
+  // Check Supabase connection and load all data
   React.useEffect(() => {
     const checkConnection = async () => {
       try {
-        // Try a simple query to check connection
-        const healthCheck = await supabase.from('user_profiles').select('count').limit(1);
-        
-        if (healthCheck.error) {
-          throw healthCheck.error;
-        }
-        
+        // Health check using adminSupabase (bypasses RLS)
+        const healthCheck = await adminSupabase.from('user_profiles').select('count').limit(1);
         setDbConnectionStatus({
           checking: false,
-          connected: true,
-          error: null
+          connected: !healthCheck.error,
+          error: healthCheck.error?.message || null
         });
-        
-        // Fetch data when connection is successful
-        await fetchAllData();
-        
-        // Fetch engagement posts and scheduled posts
-        await fetchEngagementPosts();
-        await fetchScheduledPosts();
-        
-        // Fetch iOS update settings
-        await fetchIosUpdateSettings();
-        
-        console.log("Supabase connection successful");
       } catch (err: any) {
         console.error('Supabase connection error:', err);
         setDbConnectionStatus({
@@ -1747,10 +1946,21 @@ const Dashboard = () => {
           error: err.message || 'Failed to connect to Supabase database'
         });
       }
+
+      // Always attempt to load all data regardless of health check
+      try {
+        await fetchAllData();
+        await fetchEngagementPosts();
+        await fetchScheduledPosts();
+        await fetchIosUpdateSettings();
+        await fetchAIContentSettings();
+      } catch (err) {
+        console.error('Error loading initial data:', err);
+      }
     };
     
     checkConnection();
-  }, [fetchAllData, fetchEngagementPosts, fetchScheduledPosts, fetchIosUpdateSettings]);
+  }, [fetchAllData, fetchEngagementPosts, fetchScheduledPosts, fetchIosUpdateSettings, fetchAIContentSettings]);
 
   // Timer to check scheduled posts every minute
   useEffect(() => {
@@ -1773,12 +1983,19 @@ const Dashboard = () => {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [checkAndActivateScheduledPosts]);
 
-  // Fetch all posts when engagement comments tab is accessed or filter changes
+  // Fetch all posts when engagement tab is accessed or filter changes
   useEffect(() => {
-    if (currentTab === 8) { // Engagement Comments tab
+    if (currentTab === 7) {
       fetchAllPosts();
     }
   }, [currentTab, postFilter, fetchAllPosts]);
+
+  // Fetch community posts when Community Posts tab is accessed
+  useEffect(() => {
+    if (currentTab === 10) {
+      fetchCommunityPosts();
+    }
+  }, [currentTab, fetchCommunityPosts]);
 
   // Real-time countdown timer (updates every second when viewing scheduled posts)
   useEffect(() => {
@@ -2564,152 +2781,101 @@ const Dashboard = () => {
               {showScheduledPosts ? 'Hide' : 'Show'} Scheduled Posts ({scheduledPosts.length})
             </Button>
           </Box>
-          
-          {/* Create New Engagement Post Form */}
-          <Paper sx={{ backgroundColor: '#1a1a1a', p: 3, mb: 3 }}>
-            <Typography variant="h6" sx={{ color: '#ffffff', mb: 2 }}>
-              Create New Engagement Post
-            </Typography>
-            
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField
-                fullWidth
-                label="Username"
-                value={newEngagementPost.username}
-                onChange={(e) => setNewEngagementPost(prev => ({ ...prev, username: e.target.value }))}
-                placeholder="e.g., CommunityBot"
-                sx={{
-                  '& .MuiInputBase-root': {
-                    color: '#ffffff',
-                    backgroundColor: '#2a2a2a',
-                  },
-                  '& .MuiInputLabel-root': {
-                    color: '#cccccc',
-                  },
-                  '& .MuiOutlinedInput-notchedOutline': {
-                    borderColor: '#444444',
-                  },
-                }}
-              />
-              
-              <TextField
-                fullWidth
-                multiline
-                rows={4}
-                label="Post Content"
-                value={newEngagementPost.content}
-                onChange={(e) => setNewEngagementPost(prev => ({ ...prev, content: e.target.value }))}
-                placeholder="Write your engagement post content here..."
-                sx={{
-                  '& .MuiInputBase-root': {
-                    color: '#ffffff',
-                    backgroundColor: '#2a2a2a',
-                  },
-                  '& .MuiInputLabel-root': {
-                    color: '#cccccc',
-                  },
-                  '& .MuiOutlinedInput-notchedOutline': {
-                    borderColor: '#444444',
-                  },
-                }}
-              />
-              
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <FormControl sx={{ width: '200px' }}>
-                  <Typography variant="body2" sx={{ color: '#cccccc', mb: 1 }}>
-                    Avatar Color
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    {['#A9E5BB', '#FFB385', '#CBB3FF', '#B3E5FC'].map((color) => (
-                      <Box
-                        key={color}
-                        onClick={() => setNewEngagementPost(prev => ({ ...prev, avatarColor: color }))}
-                        sx={{
-                          width: 40,
-                          height: 40,
-                          backgroundColor: color,
-                          borderRadius: '50%',
-                          cursor: 'pointer',
-                          border: newEngagementPost.avatarColor === color ? '3px solid #ffffff' : '2px solid #444444',
-                          transition: 'all 0.2s',
-                          '&:hover': {
-                            transform: 'scale(1.1)',
-                            borderColor: '#ffffff',
-                          },
-                        }}
-                      />
-                    ))}
-                  </Box>
-                </FormControl>
-                
-                <TextField
-                  label="Initial Like Count"
-                  type="number"
-                  value={newEngagementPost.likeCount}
-                  onChange={(e) => setNewEngagementPost(prev => ({ ...prev, likeCount: parseInt(e.target.value) || 0 }))}
-                  inputProps={{ min: 0 }}
+
+          {/* AI Post Automation Box */}
+          <Paper sx={{ backgroundColor: '#1a1a1a', p: 3, mb: 3, border: `1px solid ${aiContentSettings.posts_enabled ? '#4caf5055' : '#333'}` }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ color: '#ffffff' }}>
+                AI Post Automation
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="body2" sx={{ color: aiContentSettings.posts_enabled ? '#4caf50' : '#666666', fontWeight: 'bold', minWidth: 48 }}>
+                  {aiSettingsSaving ? '...' : aiContentSettings.posts_enabled ? 'ON' : 'OFF'}
+                </Typography>
+                <Switch
+                  checked={aiContentSettings.posts_enabled}
+                  onChange={handleToggleAIPosts}
+                  disabled={aiSettingsSaving}
                   sx={{
-                    width: '200px',
-                    '& .MuiInputBase-root': {
-                      color: '#ffffff',
-                      backgroundColor: '#2a2a2a',
-                    },
-                    '& .MuiInputLabel-root': {
-                      color: '#cccccc',
-                    },
-                    '& .MuiOutlinedInput-notchedOutline': {
-                      borderColor: '#444444',
-                    },
+                    '& .MuiSwitch-switchBase.Mui-checked': { color: '#4caf50' },
+                    '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4caf50' },
+                    '& .MuiSwitch-track': { backgroundColor: '#444444' },
                   }}
                 />
               </Box>
-              
-              <TextField
-                fullWidth
-                label="Delay Hours (0 = post immediately)"
-                type="number"
-                value={newEngagementPost.delayHours}
-                onChange={(e) => setNewEngagementPost(prev => ({ ...prev, delayHours: parseInt(e.target.value) || 0 }))}
-                inputProps={{ min: 0, max: 999 }}
-                helperText="Set to 0 for immediate posting, or any number of hours to delay"
-                sx={{
-                  '& .MuiInputBase-root': {
-                    color: '#ffffff',
-                    backgroundColor: '#2a2a2a',
-                  },
-                  '& .MuiInputLabel-root': {
-                    color: '#cccccc',
-                  },
-                  '& .MuiOutlinedInput-notchedOutline': {
-                    borderColor: '#444444',
-                  },
-                  '& .MuiFormHelperText-root': {
-                    color: '#999999',
-                  },
-                }}
-              />
-              
-              <Button
-                variant="contained"
-                onClick={handleCreateEngagementPost}
-                disabled={creatingEngagementPost || !newEngagementPost.content || !newEngagementPost.username}
-                sx={{
-                  backgroundColor: '#CBB3FF',
-                  color: '#000000',
-                  fontWeight: 'bold',
-                  '&:hover': {
-                    backgroundColor: '#A9E5BB',
-                  },
-                  '&:disabled': {
-                    backgroundColor: '#666666',
-                    color: '#999999',
-                  },
-                }}
-              >
-                {creatingEngagementPost ? 'Creating...' : 'Create Engagement Post'}
-              </Button>
             </Box>
+
+            {aiSettingsLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                <CircularProgress size={24} />
+              </Box>
+            ) : (
+              <>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 2, flexWrap: 'wrap' }}>
+                  <TextField
+                    label="Posts per Day"
+                    type="number"
+                    value={aiContentSettings.posts_per_day}
+                    onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, posts_per_day: parseInt(e.target.value) || 1 }))}
+                    onBlur={() => saveAIContentSettings()}
+                    inputProps={{ min: 1, max: 10 }}
+                    size="small"
+                    sx={{
+                      width: 130,
+                      '& .MuiOutlinedInput-root': {
+                        backgroundColor: '#2a2a2a',
+                        color: '#ffffff',
+                        '& fieldset': { borderColor: '#444444' },
+                        '&:hover fieldset': { borderColor: '#666666' },
+                        '&.Mui-focused fieldset': { borderColor: '#CBB3FF' },
+                      },
+                      '& .MuiInputLabel-root': { color: '#999999' },
+                      '& .MuiInputLabel-root.Mui-focused': { color: '#CBB3FF' },
+                    }}
+                  />
+
+                  <Button
+                    variant="outlined"
+                    onClick={handleTestGeneratePost}
+                    disabled={aiTestGenerating}
+                    startIcon={aiTestGenerating && aiTestGeneratingType === 'post' ? <CircularProgress size={16} sx={{ color: '#CBB3FF' }} /> : null}
+                    sx={{
+                      borderColor: '#CBB3FF',
+                      color: '#CBB3FF',
+                      '&:hover': {
+                        borderColor: '#A9E5BB',
+                        backgroundColor: 'rgba(203, 179, 255, 0.1)',
+                      },
+                    }}
+                  >
+                    {aiTestGenerating && aiTestGeneratingType === 'post' ? 'Generating...' : 'Test Generate Post'}
+                  </Button>
+
+                </Box>
+
+                {aiTestGenerating && aiTestGeneratingType === 'post' && (
+                  <Box sx={{ mb: 2 }}>
+                    <LinearProgress
+                      sx={{
+                        backgroundColor: '#333333',
+                        '& .MuiLinearProgress-bar': { backgroundColor: '#CBB3FF' },
+                        borderRadius: 1,
+                        mb: 1
+                      }}
+                    />
+                    <Typography variant="body2" sx={{ color: '#CBB3FF' }}>
+                      Calling Claude Haiku... generating post content and persona. This takes 5–15 seconds.
+                    </Typography>
+                  </Box>
+                )}
+
+                <Typography variant="body2" sx={{ color: '#888888' }}>
+                  When ON, Claude Haiku generates authentic community posts once per hour (probabilistically spread across the day). Test Generate creates one post immediately into your Scheduled Posts queue — it won't go live until the scheduled time. Likes climb gradually over time after a post goes active.
+                </Typography>
+              </>
+            )}
           </Paper>
+
           
           {/* Scheduled Posts Section */}
           {showScheduledPosts && (
@@ -2766,17 +2932,35 @@ const Dashboard = () => {
                             Scheduled for: {new Date(post.scheduled_at).toLocaleString()}
                           </Typography>
                         </Box>
-                        <IconButton
-                          onClick={() => handleDeleteScheduledPost(post.id)}
-                          sx={{ 
-                            color: '#ff4444',
-                            '&:hover': {
-                              backgroundColor: 'rgba(255, 68, 68, 0.1)',
-                            },
-                          }}
-                        >
-                          <DeleteIcon />
-                        </IconButton>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-end' }}>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            onClick={() => handlePublishScheduledPostNow(post.id)}
+                            sx={{
+                              backgroundColor: '#A9E5BB',
+                              color: '#000000',
+                              fontSize: '0.7rem',
+                              fontWeight: 'bold',
+                              px: 1.5,
+                              py: 0.5,
+                              minWidth: 'auto',
+                              '&:hover': { backgroundColor: '#8dd4a8' },
+                            }}
+                          >
+                            Publish Now
+                          </Button>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleDeleteScheduledPost(post.id)}
+                            sx={{ 
+                              color: '#ff4444',
+                              '&:hover': { backgroundColor: 'rgba(255,68,68,0.1)' },
+                            }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
                       </Box>
                     </Paper>
                   ))}
@@ -2785,190 +2969,116 @@ const Dashboard = () => {
             </Paper>
           )}
           
-          {/* Existing Engagement Posts List */}
-          <Paper sx={{ backgroundColor: '#1a1a1a', p: 3 }}>
-            <Typography variant="h6" sx={{ color: '#ffffff', mb: 2 }}>
-              Existing Engagement Posts ({engagementPosts.length})
-            </Typography>
-            
-            {engagementPostsLoading ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                <CircularProgress sx={{ color: '#CBB3FF' }} />
+          {/* AI Comment Automation - inline in Engagement tab */}
+          <Paper sx={{ backgroundColor: '#1a1a1a', p: 3, mb: 3, border: `1px solid ${aiContentSettings.comments_enabled ? '#4caf5055' : '#333'}` }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ color: '#ffffff' }}>AI Comment Automation</Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="body2" sx={{ color: aiContentSettings.comments_enabled ? '#4caf50' : '#666666', fontWeight: 'bold', minWidth: 48 }}>
+                  {aiSettingsSaving ? '...' : aiContentSettings.comments_enabled ? 'ON' : 'OFF'}
+                </Typography>
+                <Switch checked={aiContentSettings.comments_enabled} onChange={handleToggleAIComments} disabled={aiSettingsSaving}
+                  sx={{ '& .MuiSwitch-switchBase.Mui-checked': { color: '#4caf50' }, '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4caf50' }, '& .MuiSwitch-track': { backgroundColor: '#444444' } }} />
               </Box>
-            ) : engagementPosts.length === 0 ? (
-              <Typography variant="body1" sx={{ color: '#cccccc', textAlign: 'center', py: 4 }}>
-                No engagement posts created yet.
+            </Box>
+            {aiSettingsLoading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}><CircularProgress size={24} /></Box> : (
+              <>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 2, flexWrap: 'wrap' }}>
+                  <TextField label="Min per Post" type="number" value={aiContentSettings.comments_per_post_min} onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_min: parseInt(e.target.value) || 1 }))} onBlur={() => saveAIContentSettings()} inputProps={{ min: 1, max: 10 }} size="small" sx={{ width: 120, '& .MuiOutlinedInput-root': { backgroundColor: '#2a2a2a', color: '#ffffff', '& fieldset': { borderColor: '#444444' } }, '& .MuiInputLabel-root': { color: '#999999' } }} />
+                  <TextField label="Max per Post" type="number" value={aiContentSettings.comments_per_post_max} onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_max: parseInt(e.target.value) || 3 }))} onBlur={() => saveAIContentSettings()} inputProps={{ min: 1, max: 20 }} size="small" sx={{ width: 120, '& .MuiOutlinedInput-root': { backgroundColor: '#2a2a2a', color: '#ffffff', '& fieldset': { borderColor: '#444444' } }, '& .MuiInputLabel-root': { color: '#999999' } }} />
+                  <FormControl size="small" sx={{ minWidth: 160 }}>
+                    <Select value={aiContentSettings.comment_target} onChange={(e) => { const s = { ...aiContentSettings, comment_target: e.target.value }; setAiContentSettings(s); saveAIContentSettings(s); }} sx={{ backgroundColor: '#2a2a2a', color: '#ffffff', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' }, '& .MuiSvgIcon-root': { color: '#999999' } }}>
+                      <MenuItem value="ai_only">AI Posts Only</MenuItem>
+                      <MenuItem value="all_posts">All Posts</MenuItem>
+                      <MenuItem value="mixed">Mixed</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <Button variant="outlined" onClick={handleTestGenerateComment} disabled={aiTestGenerating} startIcon={aiTestGenerating && aiTestGeneratingType === 'comment' ? <CircularProgress size={16} sx={{ color: '#CBB3FF' }} /> : null} sx={{ borderColor: '#CBB3FF', color: '#CBB3FF', '&:hover': { borderColor: '#A9E5BB', backgroundColor: 'rgba(203,179,255,0.1)' } }}>
+                    {aiTestGenerating && aiTestGeneratingType === 'comment' ? 'Generating...' : 'Test Generate Comment'}
+                  </Button>
+                </Box>
+                {aiTestGenerating && aiTestGeneratingType === 'comment' && (
+                  <Box sx={{ mb: 2 }}>
+                    <LinearProgress sx={{ backgroundColor: '#333333', '& .MuiLinearProgress-bar': { backgroundColor: '#A9E5BB' }, borderRadius: 1, mb: 1 }} />
+                    <Typography variant="body2" sx={{ color: '#A9E5BB' }}>Calling Claude Haiku... reading post and writing a contextual reply. This takes 5–15 seconds.</Typography>
+                  </Box>
+                )}
+                <Typography variant="body2" sx={{ color: '#888888' }}>When ON, Claude reads each post and writes contextual replies. Min/Max per Post sets how many AI comments each post accumulates over time.</Typography>
+              </>
+            )}
+          </Paper>
+
+          {/* Create New Engagement Post — collapsible */}
+          <Paper sx={{ backgroundColor: '#1a1a1a', mb: 3, overflow: 'hidden', border: '1px solid #333' }}>
+            <Box
+              onClick={() => setCreatePostExpanded(prev => !prev)}
+              sx={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                p: 3, cursor: 'pointer',
+                '&:hover': { backgroundColor: '#222' },
+              }}
+            >
+              <Typography variant="h6" sx={{ color: '#ffffff' }}>
+                ✏️ Create New Engagement Post
               </Typography>
-            ) : (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                {engagementPosts.map((post) => (
-                  <Paper 
-                    key={post.id} 
-                    sx={{ 
-                      backgroundColor: '#2a2a2a', 
-                      p: 2,
-                      cursor: 'pointer',
-                      transition: 'all 0.3s',
-                      '&:hover': {
-                        backgroundColor: '#353535',
-                        transform: 'translateY(-2px)',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                      }
-                    }}
-                    onClick={() => handleOpenCommentsModal(post)}
-                  >
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <Box sx={{ flex: 1 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                          <Avatar
-                            sx={{
-                              bgcolor: post.display_avatar_color || '#CBB3FF',
-                              width: 32,
-                              height: 32,
-                              mr: 2,
-                              fontSize: '0.9rem'
-                            }}
-                          >
-                            {(post.display_username || 'U').charAt(0).toUpperCase()}
-                          </Avatar>
-                          <Box>
-                            <Typography 
-                              variant="subtitle1" 
-                              sx={{ 
-                                color: post.display_avatar_color || '#ffffff', 
-                                fontWeight: 'bold' 
-                              }}
-                            >
-                              @{post.display_username}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: '#cccccc' }}>
-                              {new Date(post.created_at).toLocaleDateString('en-US', { 
-                                month: 'short', 
-                                day: 'numeric', 
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })} • 
-                              {editingLikeCount === post.id ? (
-                                <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, ml: 1 }}>
-                                  <TextField
-                                    type="number"
-                                    value={newLikeCount}
-                                    onChange={(e) => setNewLikeCount(parseInt(e.target.value) || 0)}
-                                    size="small"
-                                    inputProps={{ min: 0, style: { color: '#ffffff', fontSize: '0.75rem' } }}
-                                    sx={{
-                                      width: '60px',
-                                      '& .MuiInputBase-root': {
-                                        backgroundColor: '#2a2a2a',
-                                        fontSize: '0.75rem',
-                                      },
-                                      '& .MuiOutlinedInput-notchedOutline': {
-                                        borderColor: '#444444',
-                                      },
-                                    }}
-                                  />
-                                  <Button
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleUpdateLikeCount(post.id);
-                                    }}
-                                    sx={{
-                                      backgroundColor: '#A9E5BB',
-                                      color: '#000000',
-                                      fontSize: '0.7rem',
-                                      minWidth: 'auto',
-                                      px: 1,
-                                      '&:hover': { backgroundColor: '#8dd4a8' },
-                                    }}
-                                  >
-                                    ✓
-                                  </Button>
-                                  <Button
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleCancelEditLikeCount();
-                                    }}
-                                    sx={{
-                                      backgroundColor: '#ff6b6b',
-                                      color: '#ffffff',
-                                      fontSize: '0.7rem',
-                                      minWidth: 'auto',
-                                      px: 1,
-                                      '&:hover': { backgroundColor: '#ff5252' },
-                                    }}
-                                  >
-                                    ✕
-                                  </Button>
-                                </Box>
-                              ) : (
-                                <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, ml: 1 }}>
-                                  <span>{post.like_count} likes</span>
-                                  <Button
-                                    size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleStartEditLikeCount(post.id, post.like_count || 0);
-                                    }}
-                                    sx={{
-                                      backgroundColor: 'transparent',
-                                      color: '#CBB3FF',
-                                      fontSize: '0.7rem',
-                                      minWidth: 'auto',
-                                      px: 1,
-                                      border: '1px solid #CBB3FF',
-                                      '&:hover': { backgroundColor: 'rgba(203, 179, 255, 0.1)' },
-                                    }}
-                                  >
-                                    Edit
-                                  </Button>
-                                </Box>
-                              )}
-                            </Typography>
-                          </Box>
-                        </Box>
-                        <Typography variant="body1" sx={{ color: '#ffffff', ml: 6 }}>
-                          {post.content}
-                        </Typography>
-                        <Box sx={{ ml: 6, mt: 2, display: 'flex', alignItems: 'center' }}>
-                          <Typography variant="caption" sx={{ 
-                            color: '#CBB3FF', 
-                            backgroundColor: 'rgba(203, 179, 255, 0.1)',
-                            px: 1,
-                            py: 0.5,
-                            borderRadius: 1,
-                            fontSize: '0.7rem'
-                          }}>
-                            💬 Click to view/add comments
-                          </Typography>
-                        </Box>
-                      </Box>
-                      <IconButton
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteEngagementPost(post.id);
-                        }}
-                        sx={{ 
-                          color: '#ff4444',
-                          '&:hover': {
-                            backgroundColor: 'rgba(255, 68, 68, 0.1)',
-                          },
-                        }}
-                      >
-                        <DeleteIcon />
-                      </IconButton>
+              <Typography sx={{ color: '#999999', fontSize: '1.2rem' }}>
+                {createPostExpanded ? '▲' : '▼'}
+              </Typography>
+            </Box>
+            {createPostExpanded && (
+              <Box sx={{ px: 3, pb: 3, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField fullWidth label="Username" value={newEngagementPost.username}
+                  onChange={(e) => setNewEngagementPost(prev => ({ ...prev, username: e.target.value }))}
+                  placeholder="e.g., sophie_94"
+                  sx={{ '& .MuiInputBase-root': { color: '#ffffff', backgroundColor: '#2a2a2a' }, '& .MuiInputLabel-root': { color: '#cccccc' }, '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' } }}
+                />
+                <TextField fullWidth multiline rows={4} label="Post Content" value={newEngagementPost.content}
+                  onChange={(e) => setNewEngagementPost(prev => ({ ...prev, content: e.target.value }))}
+                  placeholder="Write your engagement post content here..."
+                  sx={{ '& .MuiInputBase-root': { color: '#ffffff', backgroundColor: '#2a2a2a' }, '& .MuiInputLabel-root': { color: '#cccccc' }, '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' } }}
+                />
+                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                  <FormControl sx={{ width: '200px' }}>
+                    <Typography variant="body2" sx={{ color: '#cccccc', mb: 1 }}>Avatar Color</Typography>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      {['#A9E5BB', '#FFB385', '#CBB3FF', '#B3E5FC'].map((color) => (
+                        <Box key={color} onClick={() => setNewEngagementPost(prev => ({ ...prev, avatarColor: color }))}
+                          sx={{
+                            width: 40, height: 40, backgroundColor: color, borderRadius: '50%', cursor: 'pointer',
+                            border: newEngagementPost.avatarColor === color ? '3px solid #ffffff' : '2px solid #444444',
+                            transition: 'all 0.2s', '&:hover': { transform: 'scale(1.1)', borderColor: '#ffffff' },
+                          }}
+                        />
+                      ))}
                     </Box>
-                  </Paper>
-                ))}
+                  </FormControl>
+                  <TextField label="Initial Like Count" type="number" value={newEngagementPost.likeCount}
+                    onChange={(e) => setNewEngagementPost(prev => ({ ...prev, likeCount: parseInt(e.target.value) || 0 }))}
+                    inputProps={{ min: 0 }}
+                    sx={{ width: '180px', '& .MuiInputBase-root': { color: '#ffffff', backgroundColor: '#2a2a2a' }, '& .MuiInputLabel-root': { color: '#cccccc' }, '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' } }}
+                  />
+                  <TextField label="Delay Hours (0 = now)" type="number" value={newEngagementPost.delayHours}
+                    onChange={(e) => setNewEngagementPost(prev => ({ ...prev, delayHours: parseInt(e.target.value) || 0 }))}
+                    inputProps={{ min: 0, max: 999 }}
+                    helperText="0 = immediate"
+                    sx={{ width: '180px', '& .MuiInputBase-root': { color: '#ffffff', backgroundColor: '#2a2a2a' }, '& .MuiInputLabel-root': { color: '#cccccc' }, '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' }, '& .MuiFormHelperText-root': { color: '#999999' } }}
+                  />
+                </Box>
+                <Button variant="contained" onClick={handleCreateEngagementPost}
+                  disabled={creatingEngagementPost || !newEngagementPost.content || !newEngagementPost.username}
+                  sx={{ backgroundColor: '#CBB3FF', color: '#000000', fontWeight: 'bold', alignSelf: 'flex-start', '&:hover': { backgroundColor: '#A9E5BB' }, '&:disabled': { backgroundColor: '#666666', color: '#999999' } }}
+                >
+                  {creatingEngagementPost ? 'Creating...' : 'Create Engagement Post'}
+                </Button>
               </Box>
             )}
           </Paper>
+
         </Box>
       );
     };
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const renderEngagementComments = () => {
       return (
         <Box>
@@ -2992,6 +3102,147 @@ const Dashboard = () => {
               {postFilter === 'all' ? 'Show All Posts' : 'Show Engagement Posts Only'}
             </Button>
           </Box>
+
+          {/* AI Comment Automation Box */}
+          <Paper sx={{ backgroundColor: '#1a1a1a', p: 3, mb: 3, border: `1px solid ${aiContentSettings.comments_enabled ? '#4caf5055' : '#333'}` }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ color: '#ffffff' }}>
+                AI Comment Automation
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="body2" sx={{ color: aiContentSettings.comments_enabled ? '#4caf50' : '#666666', fontWeight: 'bold', minWidth: 48 }}>
+                  {aiSettingsSaving ? '...' : aiContentSettings.comments_enabled ? 'ON' : 'OFF'}
+                </Typography>
+                <Switch
+                  checked={aiContentSettings.comments_enabled}
+                  onChange={handleToggleAIComments}
+                  disabled={aiSettingsSaving}
+                  sx={{
+                    '& .MuiSwitch-switchBase.Mui-checked': { color: '#4caf50' },
+                    '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: '#4caf50' },
+                    '& .MuiSwitch-track': { backgroundColor: '#444444' },
+                  }}
+                />
+              </Box>
+            </Box>
+
+            {aiSettingsLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                <CircularProgress size={24} />
+              </Box>
+            ) : (
+              <>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 2, flexWrap: 'wrap' }}>
+                  <TextField
+                    label="Min per Post"
+                    type="number"
+                    value={aiContentSettings.comments_per_post_min}
+                    onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_min: parseInt(e.target.value) || 1 }))}
+                    onBlur={() => saveAIContentSettings()}
+                    inputProps={{ min: 1, max: 10 }}
+                    size="small"
+                    sx={{
+                      width: 120,
+                      '& .MuiOutlinedInput-root': {
+                        backgroundColor: '#2a2a2a',
+                        color: '#ffffff',
+                        '& fieldset': { borderColor: '#444444' },
+                        '&:hover fieldset': { borderColor: '#666666' },
+                        '&.Mui-focused fieldset': { borderColor: '#CBB3FF' },
+                      },
+                      '& .MuiInputLabel-root': { color: '#999999' },
+                      '& .MuiInputLabel-root.Mui-focused': { color: '#CBB3FF' },
+                    }}
+                  />
+
+                  <TextField
+                    label="Max per Post"
+                    type="number"
+                    value={aiContentSettings.comments_per_post_max}
+                    onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_max: parseInt(e.target.value) || 3 }))}
+                    onBlur={() => saveAIContentSettings()}
+                    inputProps={{ min: 1, max: 20 }}
+                    size="small"
+                    sx={{
+                      width: 120,
+                      '& .MuiOutlinedInput-root': {
+                        backgroundColor: '#2a2a2a',
+                        color: '#ffffff',
+                        '& fieldset': { borderColor: '#444444' },
+                        '&:hover fieldset': { borderColor: '#666666' },
+                        '&.Mui-focused fieldset': { borderColor: '#CBB3FF' },
+                      },
+                      '& .MuiInputLabel-root': { color: '#999999' },
+                      '& .MuiInputLabel-root.Mui-focused': { color: '#CBB3FF' },
+                    }}
+                  />
+
+                  <FormControl size="small" sx={{ minWidth: 160 }}>
+                    <Select
+                      value={aiContentSettings.comment_target}
+                      onChange={(e) => {
+                        const newSettings = { ...aiContentSettings, comment_target: e.target.value };
+                        setAiContentSettings(newSettings);
+                        saveAIContentSettings(newSettings);
+                      }}
+                      sx={{
+                        backgroundColor: '#2a2a2a',
+                        color: '#ffffff',
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' },
+                        '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#666666' },
+                        '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: '#CBB3FF' },
+                        '& .MuiSvgIcon-root': { color: '#999999' },
+                      }}
+                    >
+                      <MenuItem value="ai_only">AI Posts Only</MenuItem>
+                      <MenuItem value="all_posts">All Posts</MenuItem>
+                      <MenuItem value="mixed">Mixed</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Box>
+
+                <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                  <Button
+                    variant="outlined"
+                    onClick={handleTestGenerateComment}
+                    disabled={aiTestGenerating}
+                    startIcon={aiTestGenerating && aiTestGeneratingType === 'comment' ? <CircularProgress size={16} sx={{ color: '#CBB3FF' }} /> : null}
+                    sx={{
+                      borderColor: '#CBB3FF',
+                      color: '#CBB3FF',
+                      '&:hover': {
+                        borderColor: '#A9E5BB',
+                        backgroundColor: 'rgba(203, 179, 255, 0.1)',
+                      },
+                    }}
+                  >
+                    {aiTestGenerating && aiTestGeneratingType === 'comment' ? 'Generating...' : 'Test Generate Comment'}
+                  </Button>
+
+                </Box>
+
+                {aiTestGenerating && aiTestGeneratingType === 'comment' && (
+                  <Box sx={{ mb: 2 }}>
+                    <LinearProgress
+                      sx={{
+                        backgroundColor: '#333333',
+                        '& .MuiLinearProgress-bar': { backgroundColor: '#A9E5BB' },
+                        borderRadius: 1,
+                        mb: 1
+                      }}
+                    />
+                    <Typography variant="body2" sx={{ color: '#A9E5BB' }}>
+                      Calling Claude Haiku... reading post content and writing a contextual reply. This takes 5–15 seconds.
+                    </Typography>
+                  </Box>
+                )}
+
+                <Typography variant="body2" sx={{ color: '#888888' }}>
+                  Min/Max per Post sets how many AI comments each post will accumulate over time (e.g. 3–5 means each post will get between 3 and 5 comments). Claude reads the actual post content and writes contextual replies — not generic responses. Test Generate adds one comment to your first eligible active post immediately.
+                </Typography>
+              </>
+            )}
+          </Paper>
           
           <Paper sx={{ backgroundColor: '#1a1a1a', p: 3 }}>
             <Typography variant="h6" sx={{ color: '#ffffff', mb: 2 }}>
@@ -3087,6 +3338,132 @@ const Dashboard = () => {
               </Box>
             )}
           </Paper>
+        </Box>
+      );
+    };
+
+    const renderCommunityPosts = () => {
+      const filtered = allPosts.filter((p) => {
+        if (communityPostFilter === 'real') return !p.display_username;
+        if (communityPostFilter === 'engagement') return !!p.display_username;
+        return true;
+      });
+
+      const filterBtn = (label: string, value: 'all' | 'real' | 'engagement') => (
+        <Button
+          key={value}
+          size="small"
+          variant={communityPostFilter === value ? 'contained' : 'outlined'}
+          onClick={() => setCommunityPostFilter(value)}
+          sx={{
+            backgroundColor: communityPostFilter === value ? '#CBB3FF' : 'transparent',
+            color: communityPostFilter === value ? '#000000' : '#CBB3FF',
+            borderColor: '#CBB3FF',
+            '&:hover': { backgroundColor: communityPostFilter === value ? '#A9E5BB' : 'rgba(203,179,255,0.1)', borderColor: '#A9E5BB' },
+          }}
+        >
+          {label}
+        </Button>
+      );
+
+      return (
+        <Box>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
+            <Typography variant="h4" sx={{ color: '#ffffff', fontWeight: 'bold' }}>
+              Community Posts ({filtered.length})
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              {filterBtn('All Posts', 'all')}
+              {filterBtn('Real Users', 'real')}
+              {filterBtn('Engagement / AI', 'engagement')}
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={fetchCommunityPosts}
+                disabled={allPostsLoading}
+                sx={{ borderColor: '#444', color: '#aaa', '&:hover': { borderColor: '#666', backgroundColor: 'rgba(255,255,255,0.05)' } }}
+              >
+                {allPostsLoading ? 'Loading…' : '↻ Refresh'}
+              </Button>
+            </Box>
+          </Box>
+
+          {allPostsLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+              <CircularProgress sx={{ color: '#CBB3FF' }} />
+            </Box>
+          ) : filtered.length === 0 ? (
+            <Typography variant="body1" sx={{ color: '#cccccc', textAlign: 'center', py: 6 }}>
+              No posts found{communityPostFilter !== 'all' ? ' for this filter' : ''}.
+            </Typography>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {filtered.map((post) => {
+                const isEngagement = !!post.display_username;
+                const username = post.display_username || post.username || 'Unknown';
+                const avatarColor = post.display_avatar_color || post.avatar_color || '#CBB3FF';
+                return (
+                  <Paper
+                    key={post.id}
+                    onClick={() => handleOpenCommentModal(post)}
+                    sx={{
+                      backgroundColor: '#2a2a2a',
+                      p: 2,
+                      cursor: 'pointer',
+                      borderRadius: 2,
+                      transition: 'all 0.2s',
+                      '&:hover': { backgroundColor: '#333333', transform: 'translateY(-1px)', boxShadow: '0 4px 14px rgba(0,0,0,0.4)' },
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', flex: 1, gap: 1.5, minWidth: 0 }}>
+                        <Avatar sx={{ bgcolor: avatarColor, width: 38, height: 38, fontSize: '1rem', color: '#1a1a1a', fontWeight: 'bold', flexShrink: 0 }}>
+                          {username.charAt(0).toUpperCase()}
+                        </Avatar>
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                            <Typography variant="subtitle2" sx={{ color: '#ffffff', fontWeight: 'bold' }}>
+                              @{username}
+                            </Typography>
+                            {isEngagement && (
+                              <Chip label="Engagement" size="small" sx={{ backgroundColor: 'rgba(203,179,255,0.2)', color: '#CBB3FF', fontSize: '0.65rem', height: 18 }} />
+                            )}
+                            {post.is_ai_generated && (
+                              <Chip label="✨ AI" size="small" sx={{ backgroundColor: 'rgba(203,179,255,0.15)', color: '#CBB3FF', fontSize: '0.65rem', height: 18 }} />
+                            )}
+                            {post.ai_comment_count > 0 && (
+                              <Chip
+                                label={`🤖 ${post.ai_comment_count} AI ${post.ai_comment_count === 1 ? 'comment' : 'comments'}`}
+                                size="small"
+                                sx={{ backgroundColor: 'rgba(169,229,187,0.15)', color: '#A9E5BB', fontSize: '0.65rem', height: 18 }}
+                              />
+                            )}
+                          </Box>
+                          <Typography variant="caption" sx={{ color: '#888888' }}>
+                            {new Date(post.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            {' • '}{post.like_count || 0} likes{' • '}{post.comment_count || 0} comments
+                          </Typography>
+                          <Typography variant="body2" sx={{ color: '#e0e0e0', mt: 0.5, lineHeight: 1.5 }}>
+                            {post.content}
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 1, flexShrink: 0 }}>
+                        <Typography variant="caption" sx={{ color: '#555', fontSize: '0.7rem' }}>💬</Typography>
+                        <IconButton
+                          size="small"
+                          onClick={(e) => { e.stopPropagation(); handleDeleteCommunityPost(post.id); }}
+                          sx={{ color: '#555', '&:hover': { color: '#ff6b6b', backgroundColor: 'rgba(255,107,107,0.1)' } }}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                    </Box>
+                  </Paper>
+                );
+              })}
+            </Box>
+          )}
         </Box>
       );
     };
@@ -3998,9 +4375,9 @@ const Dashboard = () => {
           {currentTab === 5 && renderReferral()}
           {currentTab === 6 && renderBannedUsers()}
           {currentTab === 7 && renderEngagementPosts()}
-          {currentTab === 8 && renderEngagementComments()}
-          {currentTab === 9 && renderOnboardingAnalytics()}
-          {currentTab === 10 && renderAppSettings()}
+          {currentTab === 8 && renderOnboardingAnalytics()}
+          {currentTab === 9 && renderAppSettings()}
+          {currentTab === 10 && renderCommunityPosts()}
         </Box>
       </Box>
     );
@@ -4370,7 +4747,26 @@ const Dashboard = () => {
                 )}
               </ListItemButton>
             </ListItem>
-            {/* Engagement Comments */}
+            {/* Community Posts */}
+            <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={currentTab === 10}
+                onClick={() => setCurrentTab(10)}
+                sx={{
+                  borderRadius: 1,
+                  '&.Mui-selected': { backgroundColor: 'rgba(169, 229, 187, 0.2)', '&:hover': { backgroundColor: 'rgba(169, 229, 187, 0.3)' } },
+                  '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)' },
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 10 ? '#A9E5BB' : '#cccccc' }}>
+                  <PeopleIcon />
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText primary="Community Posts" sx={{ color: currentTab === 10 ? '#A9E5BB' : '#ffffff' }} />
+                )}
+              </ListItemButton>
+            </ListItem>
+            {/* Onboarding Analytics */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 8}
@@ -4389,17 +4785,20 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 8 ? '#A9E5BB' : '#cccccc' }}>
-                  <CommentIcon />
+                  <AnalyticsIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
-                    primary={`Engagement Comments (${allPosts.length})`} 
+                    primary="Onboarding Analytics" 
                     sx={{ color: currentTab === 8 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
             </ListItem>
-            {/* Onboarding Analytics */}
+            
+            <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)', my: 1 }} />
+            
+            {/* App Settings */}
             <ListItem disablePadding sx={{ mb: 0.5 }}>
               <ListItemButton
                 selected={currentTab === 9}
@@ -4418,44 +4817,12 @@ const Dashboard = () => {
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 40, color: currentTab === 9 ? '#A9E5BB' : '#cccccc' }}>
-                  <AnalyticsIcon />
-                </ListItemIcon>
-                {sidebarOpen && (
-                  <ListItemText 
-                    primary="Onboarding Analytics" 
-                    sx={{ color: currentTab === 9 ? '#A9E5BB' : '#ffffff' }}
-                  />
-                )}
-              </ListItemButton>
-            </ListItem>
-            
-            <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)', my: 1 }} />
-            
-            {/* App Settings */}
-            <ListItem disablePadding sx={{ mb: 0.5 }}>
-              <ListItemButton
-                selected={currentTab === 10}
-                onClick={() => setCurrentTab(10)}
-                sx={{
-                  borderRadius: 1,
-                  '&.Mui-selected': {
-                    backgroundColor: 'rgba(169, 229, 187, 0.2)',
-                    '&:hover': {
-                      backgroundColor: 'rgba(169, 229, 187, 0.3)',
-                    },
-                  },
-                  '&:hover': {
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                  },
-                }}
-              >
-                <ListItemIcon sx={{ minWidth: 40, color: currentTab === 10 ? '#A9E5BB' : '#cccccc' }}>
                   <SettingsIcon />
                 </ListItemIcon>
                 {sidebarOpen && (
                   <ListItemText 
                     primary="App Settings" 
-                    sx={{ color: currentTab === 10 ? '#A9E5BB' : '#ffffff' }}
+                    sx={{ color: currentTab === 9 ? '#A9E5BB' : '#ffffff' }}
                   />
                 )}
               </ListItemButton>
@@ -6488,19 +6855,17 @@ const Dashboard = () => {
                           {comment.content}
                         </Typography>
                       </Box>
-                      {comment.display_username && (
-                        <IconButton
-                          onClick={() => handleDeleteEngagementComment(comment.id)}
-                          sx={{ 
-                            color: '#ff4444',
-                            '&:hover': {
-                              backgroundColor: 'rgba(255, 68, 68, 0.1)',
-                            },
-                          }}
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      )}
+                      <IconButton
+                        onClick={() => handleDeleteEngagementComment(comment.id)}
+                        sx={{ 
+                          color: '#ff4444',
+                          '&:hover': {
+                            backgroundColor: 'rgba(255, 68, 68, 0.1)',
+                          },
+                        }}
+                      >
+                        <DeleteIcon />
+                      </IconButton>
                     </Box>
                   </Paper>
                 ))}
@@ -6761,19 +7126,17 @@ const Dashboard = () => {
                           {comment.content}
                         </Typography>
                       </Box>
-                      {comment.display_username && (
-                        <IconButton
-                          onClick={() => handleDeleteEngagementComment(comment.id)}
-                          sx={{ 
-                            color: '#ff4444',
-                            '&:hover': {
-                              backgroundColor: 'rgba(255, 68, 68, 0.1)',
-                            },
-                          }}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      )}
+                      <IconButton
+                        onClick={() => handleDeleteEngagementComment(comment.id)}
+                        sx={{ 
+                          color: '#ff4444',
+                          '&:hover': {
+                            backgroundColor: 'rgba(255, 68, 68, 0.1)',
+                          },
+                        }}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
                     </Box>
                   </Paper>
                 ))}
@@ -6782,6 +7145,7 @@ const Dashboard = () => {
           </Paper>
         </DialogContent>
       </Dialog>
+
 
     </Box>
   );

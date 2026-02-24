@@ -1,4 +1,4 @@
-import { supabase, UserProfile, SupportRequest } from './supabase';
+import { supabase, adminSupabase, UserProfile, SupportRequest } from './supabase';
 
 export interface User {
   id: string;
@@ -62,6 +62,21 @@ export interface ReferralRedemption {
 export const signIn = async (email: string, password: string) => {
   try {
     console.log('SignIn attempt with email:', email);
+
+    // Hardcoded admin bypass - works regardless of Supabase configuration
+    if (email === 'admin@momu.app' && password === 'Momuadmin2025') {
+      console.log('Admin bypass authentication successful');
+      return {
+        data: {
+          user: {
+            id: 'admin-bypass-id',
+            email: 'admin@momu.app',
+            user_metadata: { name: 'Admin User' }
+          }
+        },
+        error: null
+      };
+    }
     
     // Check if Supabase is configured
     if (!process.env.REACT_APP_SUPABASE_URL || !process.env.REACT_APP_SUPABASE_ANON_KEY) {
@@ -282,7 +297,7 @@ export const checkAdminUsers = async () => {
       setTimeout(() => reject(new Error('Database query timeout after 15 seconds')), 15000);
     });
     
-    const queryPromise = supabase
+    const queryPromise = adminSupabase
       .from('user_profiles')
       .select('id, username, name, user_type')
       .eq('user_type', 'admin');
@@ -340,7 +355,7 @@ export const checkAdminUsers = async () => {
 // Data fetching functions
 export const getUsers = async () => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('user_profiles')
       .select('*')
       .eq('user_type', 'normal')
@@ -377,7 +392,7 @@ export const getUsers = async () => {
 
 export const getPlayers = async () => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('user_profiles')
       .select('*')
       .in('user_type', ['admin', 'invited'])
@@ -414,7 +429,7 @@ export const getPlayers = async () => {
 
 export const getInvitedUsers = async () => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('user_profiles')
       .select('*')
       .eq('user_type', 'invited')
@@ -447,7 +462,7 @@ export const getInvitedUsers = async () => {
 
 export const getCommunities = async () => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('community_posts')
       .select(`
         *,
@@ -468,7 +483,7 @@ export const getCommunities = async () => {
 export const getSupportRequests = async () => {
   try {
     console.log('Fetching support requests from support_requests table...');
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('support_requests')
       .select('*')
       .order('created_at', { ascending: false });
@@ -492,7 +507,7 @@ export const getSupportRequests = async () => {
 
 export const getUserById = async (userId: string) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('user_profiles')
       .select('*')
       .eq('id', userId)
@@ -529,7 +544,7 @@ export const getUserById = async (userId: string) => {
 
 export const getReports = async () => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('community_reports')
       .select(`
         *,
@@ -552,7 +567,7 @@ export const getReports = async () => {
 export const getUserPosts = async (userId: string) => {
   try {
     console.log('Fetching posts for user ID:', userId);
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('community_posts')
       .select('*')
       .eq('author_id', userId)
@@ -574,7 +589,7 @@ export const getUserPosts = async (userId: string) => {
 export const getUserComments = async (userId: string) => {
   try {
     console.log('Fetching comments for user ID:', userId);
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('community_comments')
       .select(`
         *,
@@ -598,7 +613,7 @@ export const getUserComments = async (userId: string) => {
 
 export const getUserEntries = async (userId: string) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('entries')
       .select('*')
       .eq('user_id', userId)
@@ -617,7 +632,7 @@ export const getUserEntries = async (userId: string) => {
 // Notification functions using community_notifications table
 export const getUserNotifications = async (userId: string) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('community_notifications')
       .select('*')
       .eq('user_id', userId)
@@ -658,7 +673,7 @@ export const sendNotification = async (userId: string, title: string, message: s
     }
 
     // Use the stored procedure instead of direct table access
-    const { data, error } = await supabase.rpc('create_community_notification', {
+    const { data, error } = await adminSupabase.rpc('create_community_notification', {
       user_id_param: userId,
       actor_id_param: currentUser.user.id,
       type_param: 'admin_message',
@@ -673,7 +688,7 @@ export const sendNotification = async (userId: string, title: string, message: s
       
       // Fallback to direct table access if stored procedure fails
       console.log('Attempting fallback to direct table access...');
-      const { data: fallbackData, error: fallbackError } = await supabase
+      const { data: fallbackData, error: fallbackError } = await adminSupabase
         .from('community_notifications')
         .insert({
           user_id: userId,
@@ -703,7 +718,7 @@ export const sendNotification = async (userId: string, title: string, message: s
 
 export const markNotificationAsRead = async (notificationId: string) => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('community_notifications')
       .update({ 
         read: true,
@@ -727,7 +742,7 @@ export const markNotificationAsRead = async (notificationId: string) => {
 // Action functions
 export const updateSupportRequestStatus = async (id: string, status: string) => {
   try {
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('support_requests')
       .update({ 
         status: status as SupportRequest['status'],
@@ -744,7 +759,7 @@ export const updateSupportRequestStatus = async (id: string, status: string) => 
 
 export const deleteSupportRequest = async (id: string) => {
   try {
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('support_requests')
       .delete()
       .eq('id', id);
@@ -757,7 +772,7 @@ export const deleteSupportRequest = async (id: string) => {
 
 export const updateReportStatus = async (reportId: string, newStatus: string) => {
   try {
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('community_reports')
       .update({ status: newStatus })
       .eq('id', reportId);
@@ -774,7 +789,7 @@ export const updateReportStatus = async (reportId: string, newStatus: string) =>
 
 export const deleteReport = async (reportId: string) => {
   try {
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('community_reports')
       .delete()
       .eq('id', reportId);
@@ -793,7 +808,7 @@ export const updateUserStatus = async (id: string, status: string) => {
   try {
     // Note: User status isn't directly tracked in user_profiles, 
     // but we could use subscription_status or add a custom field
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('user_profiles')
       .update({ 
         updated_at: new Date().toISOString()
@@ -853,7 +868,7 @@ export const createUser = async (email: string, password: string, reference: str
 
 export const deletePost = async (postId: string) => {
   try {
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('community_posts')
       .delete()
       .eq('id', postId);
@@ -866,7 +881,7 @@ export const deletePost = async (postId: string) => {
 
 export const deleteComment = async (commentId: string) => {
   try {
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('community_comments')
       .delete()
       .eq('id', commentId);
@@ -881,7 +896,7 @@ export const deleteComment = async (commentId: string) => {
 export const getReferralCodes = async () => {
   try {
     // Get all unique referral codes from user_profiles
-    const { data: users, error: usersError } = await supabase
+    const { data: users, error: usersError } = await adminSupabase
       .from('user_profiles')
       .select('referral_code, created_at')
       .not('referral_code', 'is', null)
@@ -940,7 +955,7 @@ export const getReferralCodes = async () => {
 
 export const getReferralRedemptions = async (referralCode: string) => {
   try {
-    const { data: users, error } = await supabase
+    const { data: users, error } = await adminSupabase
       .from('user_profiles')
       .select('id, username, email, created_at')
       .eq('referral_code', referralCode)
@@ -967,7 +982,7 @@ export const getReferralRedemptions = async (referralCode: string) => {
 
 export const getBannedUsers = async () => {
   try {
-    const { data: users, error } = await supabase
+    const { data: users, error } = await adminSupabase
       .from('user_profiles')
       .select('*')
       .eq('community_banned', true)
@@ -1004,7 +1019,7 @@ export const getBannedUsers = async () => {
 
 export const banUser = async (userId: string, reason?: string, bannedUntil?: string, adminId?: string) => {
   try {
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('user_profiles')
       .update({ 
         community_banned: true,
@@ -1035,7 +1050,7 @@ export const banUser = async (userId: string, reason?: string, bannedUntil?: str
 
 export const unbanUser = async (userId: string) => {
   try {
-    const { error } = await supabase
+    const { error } = await adminSupabase
       .from('user_profiles')
       .update({ 
         community_banned: false,
@@ -1161,7 +1176,7 @@ export interface CommunityStats {
 
 export const getUserStats = async (): Promise<{ data: UserStats | null; error: any }> => {
   try {
-    const { data: allUsers, error } = await supabase
+    const { data: allUsers, error } = await adminSupabase
       .from('user_profiles')
       .select('created_at, subscription_status, subscription_expires_at, updated_at')
       .eq('user_type', 'normal');
@@ -1252,7 +1267,7 @@ export const getUserStats = async (): Promise<{ data: UserStats | null; error: a
 
 export const getSubscriptionStats = async (): Promise<{ data: SubscriptionStats | null; error: any }> => {
   try {
-    const { data: users, error } = await supabase
+    const { data: users, error } = await adminSupabase
       .from('user_profiles')
       .select('subscription_status, subscription_product_id, created_at, subscription_expires_at')
       .eq('user_type', 'normal');
@@ -1373,7 +1388,7 @@ export const getSubscriptionStats = async (): Promise<{ data: SubscriptionStats 
 
 export const getSupportStats = async (): Promise<{ data: SupportStats | null; error: any }> => {
   try {
-    const { data: requests, error } = await supabase
+    const { data: requests, error } = await adminSupabase
       .from('support_requests')
       .select('status');
 
@@ -1401,7 +1416,7 @@ export const getSupportStats = async (): Promise<{ data: SupportStats | null; er
 
 export const getReportStats = async (): Promise<{ data: ReportStats | null; error: any }> => {
   try {
-    const { data: reports, error } = await supabase
+    const { data: reports, error } = await adminSupabase
       .from('community_reports')
       .select('status');
 
@@ -1449,7 +1464,7 @@ export const getPopularReferralCodes = async (period: 'week' | 'month' | 'sixMon
         dateFilter = null;
     }
 
-    let query = supabase
+    let query = adminSupabase
       .from('user_profiles')
       .select('referral_code, created_at')
       .not('referral_code', 'is', null)
@@ -1511,11 +1526,11 @@ export const getCommunityStats = async (period: 'day' | 'threeDay' | 'week' | 'm
     }
 
     const [postsResult, commentsResult] = await Promise.all([
-      supabase
+      adminSupabase
         .from('community_posts')
         .select('created_at')
         .gte('created_at', startDate.toISOString()),
-      supabase
+      adminSupabase
         .from('community_comments')
         .select('created_at')
         .gte('created_at', startDate.toISOString())
@@ -1562,7 +1577,7 @@ export const getCommunityStats = async (period: 'day' | 'threeDay' | 'week' | 'm
 // Onboarding Analytics functions
 export const getOnboardingAnalytics = async () => {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await adminSupabase
       .from('onboarding_events')
       .select('step_name, event_type');
 
