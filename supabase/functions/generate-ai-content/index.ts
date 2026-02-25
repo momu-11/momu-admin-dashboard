@@ -467,14 +467,12 @@ serve(async (req) => {
 
     const settings = settingsRow.setting_value
 
-    // If not a manual test, check if automation is enabled
-    if (!isManualTest) {
-      if (!settings.posts_enabled && !settings.comments_enabled) {
-        return new Response(
-          JSON.stringify({ message: 'AI automation is disabled', skipped: true }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        )
-      }
+    // If not a manual test, check if comment automation is enabled
+    if (!isManualTest && !settings.comments_enabled) {
+      return new Response(
+        JSON.stringify({ message: 'Comment automation is disabled', skipped: true }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
 
     // Get admin user for author_id
@@ -497,43 +495,10 @@ serve(async (req) => {
       await initializePersonaPool(supabase, anthropicApiKey)
     }
 
-    const results: any = { posts: [], comments: [] }
+    const results: any = { comments: [] }
 
-    // --- POST GENERATION ---
-    const shouldGeneratePosts = isManualTest
-      ? (generateType === 'post' || generateType === 'both')
-      : settings.posts_enabled
-
-    if (shouldGeneratePosts) {
-      if (isManualTest) {
-        // Generate one post immediately for testing
-        const post = await generatePost(supabase, anthropicApiKey, adminUserId, true)
-        if (post) results.posts.push(post)
-      } else {
-        // Probabilistic: postsPerDay / 24 chance each hour
-        const postsPerDay = settings.posts_per_day || 2
-        const probability = postsPerDay / 24
-
-        // Check how many posts were already generated today
-        const todayStart = new Date()
-        todayStart.setHours(0, 0, 0, 0)
-
-        const { count: todayPostCount } = await supabase
-          .from('ai_content_log')
-          .select('*', { count: 'exact', head: true })
-          .eq('content_type', 'post')
-          .gte('created_at', todayStart.toISOString())
-
-        if ((todayPostCount || 0) < postsPerDay) {
-          if (Math.random() < probability) {
-            const post = await generatePost(supabase, anthropicApiKey, adminUserId)
-            if (post) results.posts.push(post)
-          }
-        }
-      }
-    }
-
-    // --- COMMENT GENERATION ---
+    // --- COMMENT GENERATION ONLY ---
+    // Post generation is handled by generate-daily-posts (midnight cron)
     const shouldGenerateComments = isManualTest
       ? (generateType === 'comment' || generateType === 'both')
       : settings.comments_enabled
@@ -543,52 +508,59 @@ serve(async (req) => {
       const minComments = settings.comments_per_post_min || 3
       const maxComments = settings.comments_per_post_max || 5
 
-      // Find posts that need comments
+      // --- STEP 1: Assign target_comment_count to any active posts that don't have one yet ---
+      let unassignedQuery = supabase
+        .from('community_posts')
+        .select('id')
+        .eq('status', 'active')
+        .is('target_comment_count', null)
+        .limit(20)
+      if (commentTarget === 'ai_only') {
+        unassignedQuery = unassignedQuery.eq('is_ai_generated', true)
+      }
+      const { data: unassignedPosts } = await unassignedQuery
+      if (unassignedPosts && unassignedPosts.length > 0) {
+        for (const p of unassignedPosts) {
+          await supabase
+            .from('community_posts')
+            .update({ target_comment_count: randomInt(minComments, maxComments) })
+            .eq('id', p.id)
+        }
+        console.log(`Assigned comment targets to ${unassignedPosts.length} posts`)
+      }
+
+      // --- STEP 2: Find posts that haven't hit their comment target yet ---
       let postsQuery = supabase
         .from('community_posts')
-        .select('id, content, is_ai_generated, comment_count')
+        .select('id, content, is_ai_generated, comment_count, target_comment_count')
         .eq('status', 'active')
+        .not('target_comment_count', 'is', null)
         .order('created_at', { ascending: false })
         .limit(10)
-
       if (commentTarget === 'ai_only') {
         postsQuery = postsQuery.eq('is_ai_generated', true)
       }
 
       const { data: eligiblePosts } = await postsQuery
+      const postsNeedingComments = (eligiblePosts || []).filter(
+        (p: any) => (p.comment_count || 0) < (p.target_comment_count || 0)
+      )
 
-      if (eligiblePosts && eligiblePosts.length > 0) {
-        // Filter posts that don't have enough comments yet
-        const postsNeedingComments = eligiblePosts.filter((p: any) => {
-          const targetComments = randomInt(minComments, maxComments)
-          return (p.comment_count || 0) < targetComments
-        })
-
-        if (isManualTest) {
-          // For testing, add one comment to the first eligible post
-          const targetPost = postsNeedingComments[0] || eligiblePosts[0]
-          if (targetPost) {
-            const commentId = await generateComment(supabase, anthropicApiKey, adminUserId, targetPost)
-            if (commentId) results.comments.push({ postId: targetPost.id, commentId })
-          }
-        } else {
-          // For automated: pick 1-2 posts per hour and add a comment
-          const postsToComment = postsNeedingComments.slice(0, randomInt(1, 2))
-          for (const post of postsToComment) {
-            const commentId = await generateComment(supabase, anthropicApiKey, adminUserId, post)
-            if (commentId) results.comments.push({ postId: post.id, commentId })
-          }
+      if (isManualTest) {
+        const targetPost = postsNeedingComments[0] || eligiblePosts?.[0]
+        if (targetPost) {
+          const commentId = await generateComment(supabase, anthropicApiKey, adminUserId, targetPost)
+          if (commentId) results.comments.push({ postId: targetPost.id, commentId })
+        }
+      } else {
+        const postsToComment = postsNeedingComments.slice(0, randomInt(1, 2))
+        for (const post of postsToComment) {
+          const commentId = await generateComment(supabase, anthropicApiKey, adminUserId, post)
+          if (commentId) results.comments.push({ postId: post.id, commentId })
         }
       }
     }
 
-    // For manual tests, return 500 if nothing was generated so the UI can show an error
-    if (isManualTest && results.posts.length === 0 && (generateType === 'post' || generateType === 'both')) {
-      return new Response(
-        JSON.stringify({ error: 'Post generation failed — check Edge Function logs for details.' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
     if (isManualTest && results.comments.length === 0 && generateType === 'comment') {
       return new Response(
         JSON.stringify({ error: 'Comment generation failed — no eligible post found or insert error. Check logs.' }),
@@ -598,11 +570,10 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        message: 'AI content generation complete',
+        message: 'AI comment generation complete',
         isManualTest,
-        results,
-        postsGenerated: results.posts.length,
-        commentsGenerated: results.comments.length
+        commentsGenerated: results.comments.length,
+        comments: results.comments,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )

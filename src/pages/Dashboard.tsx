@@ -242,8 +242,14 @@ const Dashboard = () => {
   });
   const [aiSettingsLoading, setAiSettingsLoading] = useState<boolean>(false);
   const [aiSettingsSaving, setAiSettingsSaving] = useState<boolean>(false);
+  const [aiSettingsSaved, setAiSettingsSaved] = useState<boolean>(false);
+  const [aiSettingsHasChanges, setAiSettingsHasChanges] = useState<boolean>(false);
   const [aiTestGenerating, setAiTestGenerating] = useState<boolean>(false);
   const [aiTestGeneratingType, setAiTestGeneratingType] = useState<'post' | 'comment' | null>(null);
+  const [aiActivityLog, setAiActivityLog] = useState<any[]>([]);
+  const [aiActivityLogLoading, setAiActivityLogLoading] = useState<boolean>(false);
+  const [postLogExpanded, setPostLogExpanded] = useState<boolean>(false);
+  const [commentLogExpanded, setCommentLogExpanded] = useState<boolean>(false);
   
   // Support request modal state
   const [selectedSupportRequest, setSelectedSupportRequest] = useState<any>(null);
@@ -1420,6 +1426,13 @@ const Dashboard = () => {
 
   const handleDeleteEngagementComment = async (commentId: string) => {
     try {
+      // Get the post_id before deleting so we can decrement the count
+      const { data: commentData } = await adminSupabase
+        .from('community_comments')
+        .select('post_id')
+        .eq('id', commentId)
+        .single();
+
       const { error } = await adminSupabase
         .from('community_comments')
         .delete()
@@ -1431,10 +1444,26 @@ const Dashboard = () => {
         return;
       }
 
-      // Refresh comments
+      // Decrement comment_count on the post
+      if (commentData?.post_id) {
+        const { data: postData } = await adminSupabase
+          .from('community_posts')
+          .select('comment_count')
+          .eq('id', commentData.post_id)
+          .single();
+        if (postData) {
+          await adminSupabase
+            .from('community_posts')
+            .update({ comment_count: Math.max(0, (postData.comment_count || 0) - 1) })
+            .eq('id', commentData.post_id);
+        }
+      }
+
+      // Refresh comments and post lists
       if (selectedPostForComments) {
         await fetchPostComments(selectedPostForComments.id);
       }
+      await Promise.all([fetchEngagementPosts(), fetchCommunityPosts()]);
     } catch (error) {
       console.error('Error in handleDeleteEngagementComment:', error);
       alert('Failed to delete comment');
@@ -1818,6 +1847,22 @@ const Dashboard = () => {
     }
   }, []);
 
+  const fetchAIActivityLog = useCallback(async () => {
+    setAiActivityLogLoading(true);
+    try {
+      const { data, error } = await adminSupabase
+        .from('ai_content_log')
+        .select('id, content_type, generated_content, persona_username, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (!error && data) setAiActivityLog(data);
+    } catch (err) {
+      console.error('Error fetching AI activity log:', err);
+    } finally {
+      setAiActivityLogLoading(false);
+    }
+  }, []);
+
   const saveAIContentSettings = async (updatedSettings?: any) => {
     setAiSettingsSaving(true);
     try {
@@ -1836,12 +1881,9 @@ const Dashboard = () => {
       if (error) throw error;
 
       setAiContentSettings(settingsToSave);
-
-      const successMessage = document.createElement('div');
-      successMessage.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #4caf50; color: white; padding: 16px 24px; border-radius: 8px; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);';
-      successMessage.textContent = '\u2713 AI settings saved successfully';
-      document.body.appendChild(successMessage);
-      setTimeout(() => successMessage.remove(), 3000);
+      setAiSettingsHasChanges(false);
+      setAiSettingsSaved(true);
+      setTimeout(() => setAiSettingsSaved(false), 2500);
     } catch (error: any) {
       console.error('Error saving AI settings:', error);
       alert(`Failed to save AI settings: ${error?.message || 'Unknown error'}`);
@@ -1870,13 +1912,13 @@ const Dashboard = () => {
     setAiTestGenerating(true);
     setAiTestGeneratingType('post');
     try {
-      const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/generate-ai-content`, {
+      const response = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/generate-daily-posts`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${process.env.REACT_APP_SUPABASE_ANON_KEY}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ test: true, type: 'post' })
+        body: JSON.stringify({ test: true })
       });
 
       const result = await response.json();
@@ -1885,7 +1927,7 @@ const Dashboard = () => {
         throw new Error(result.error || 'Failed to generate test post');
       }
 
-      await Promise.all([fetchEngagementPosts(), fetchScheduledPosts(), fetchCommunityPosts()]);
+      await Promise.all([fetchEngagementPosts(), fetchScheduledPosts(), fetchCommunityPosts(), fetchAIActivityLog()]);
       alert(`Test post generated! Post is now live in Community Posts.`);
     } catch (error: any) {
       console.error('Error generating test post:', error);
@@ -1915,7 +1957,7 @@ const Dashboard = () => {
         throw new Error(result.error || 'Failed to generate test comment');
       }
 
-      await fetchAllPosts();
+      await Promise.all([fetchAllPosts(), fetchAIActivityLog()]);
       alert(`Test comment generated! ${result.commentsGenerated} comment created.`);
     } catch (error: any) {
       console.error('Error generating test comment:', error);
@@ -1954,13 +1996,14 @@ const Dashboard = () => {
         await fetchScheduledPosts();
         await fetchIosUpdateSettings();
         await fetchAIContentSettings();
+        await fetchAIActivityLog();
       } catch (err) {
         console.error('Error loading initial data:', err);
       }
     };
     
     checkConnection();
-  }, [fetchAllData, fetchEngagementPosts, fetchScheduledPosts, fetchIosUpdateSettings, fetchAIContentSettings]);
+  }, [fetchAllData, fetchEngagementPosts, fetchScheduledPosts, fetchIosUpdateSettings, fetchAIContentSettings, fetchAIActivityLog]);
 
   // Timer to check scheduled posts every minute
   useEffect(() => {
@@ -2816,8 +2859,7 @@ const Dashboard = () => {
                     label="Posts per Day"
                     type="number"
                     value={aiContentSettings.posts_per_day}
-                    onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, posts_per_day: parseInt(e.target.value) || 1 }))}
-                    onBlur={() => saveAIContentSettings()}
+                    onChange={(e) => { setAiContentSettings((prev: any) => ({ ...prev, posts_per_day: parseInt(e.target.value) || 1 })); setAiSettingsHasChanges(true); }}
                     inputProps={{ min: 1, max: 10 }}
                     size="small"
                     sx={{
@@ -2835,6 +2877,23 @@ const Dashboard = () => {
                   />
 
                   <Button
+                    variant="contained"
+                    onClick={() => saveAIContentSettings()}
+                    disabled={aiSettingsSaving || !aiSettingsHasChanges}
+                    startIcon={aiSettingsSaving ? <CircularProgress size={14} sx={{ color: '#fff' }} /> : null}
+                    sx={{
+                      backgroundColor: aiSettingsSaved ? '#4caf50' : '#CBB3FF',
+                      color: '#1a1a1a',
+                      fontWeight: 'bold',
+                      '&:hover': { backgroundColor: '#b39ddb' },
+                      '&:disabled': { backgroundColor: '#333', color: '#666' },
+                      minWidth: 120,
+                    }}
+                  >
+                    {aiSettingsSaving ? 'Saving...' : aiSettingsSaved ? '✓ Saved' : 'Save Settings'}
+                  </Button>
+
+                  <Button
                     variant="outlined"
                     onClick={handleTestGeneratePost}
                     disabled={aiTestGenerating}
@@ -2842,10 +2901,7 @@ const Dashboard = () => {
                     sx={{
                       borderColor: '#CBB3FF',
                       color: '#CBB3FF',
-                      '&:hover': {
-                        borderColor: '#A9E5BB',
-                        backgroundColor: 'rgba(203, 179, 255, 0.1)',
-                      },
+                      '&:hover': { borderColor: '#A9E5BB', backgroundColor: 'rgba(203, 179, 255, 0.1)' },
                     }}
                   >
                     {aiTestGenerating && aiTestGeneratingType === 'post' ? 'Generating...' : 'Test Generate Post'}
@@ -2855,23 +2911,45 @@ const Dashboard = () => {
 
                 {aiTestGenerating && aiTestGeneratingType === 'post' && (
                   <Box sx={{ mb: 2 }}>
-                    <LinearProgress
-                      sx={{
-                        backgroundColor: '#333333',
-                        '& .MuiLinearProgress-bar': { backgroundColor: '#CBB3FF' },
-                        borderRadius: 1,
-                        mb: 1
-                      }}
-                    />
+                    <LinearProgress sx={{ backgroundColor: '#333333', '& .MuiLinearProgress-bar': { backgroundColor: '#CBB3FF' }, borderRadius: 1, mb: 1 }} />
                     <Typography variant="body2" sx={{ color: '#CBB3FF' }}>
                       Calling Claude Haiku... generating post content and persona. This takes 5–15 seconds.
                     </Typography>
                   </Box>
                 )}
 
-                <Typography variant="body2" sx={{ color: '#888888' }}>
-                  When ON, Claude Haiku generates authentic community posts once per hour (probabilistically spread across the day). Test Generate creates one post immediately into your Scheduled Posts queue — it won't go live until the scheduled time. Likes climb gradually over time after a post goes active.
+                <Typography variant="body2" sx={{ color: '#888888', mb: 2 }}>
+                  When ON, posts are generated at midnight and scheduled at random times between 8am–10pm. Exactly {aiContentSettings.posts_per_day} post{aiContentSettings.posts_per_day !== 1 ? 's' : ''} per day guaranteed. Likes climb gradually over time.
                 </Typography>
+
+                {/* Post Activity Log */}
+                <Box>
+                  <Button
+                    size="small"
+                    onClick={() => { setPostLogExpanded(e => !e); if (!postLogExpanded) fetchAIActivityLog(); }}
+                    sx={{ color: '#666', fontSize: '0.75rem', p: 0, mb: 1, '&:hover': { color: '#999' } }}
+                  >
+                    {postLogExpanded ? '▾ Hide' : '▸ Show'} Activity Log
+                  </Button>
+                  {postLogExpanded && (
+                    <Box sx={{ maxHeight: 260, overflowY: 'auto', backgroundColor: '#111', borderRadius: 1, p: 1.5 }}>
+                      {aiActivityLogLoading ? (
+                        <CircularProgress size={18} sx={{ color: '#CBB3FF' }} />
+                      ) : aiActivityLog.filter(e => e.content_type === 'post').length === 0 ? (
+                        <Typography variant="caption" sx={{ color: '#555' }}>No post activity yet.</Typography>
+                      ) : aiActivityLog.filter(e => e.content_type === 'post').map((entry: any) => (
+                        <Box key={entry.id} sx={{ mb: 1, pb: 1, borderBottom: '1px solid #222' }}>
+                          <Typography variant="caption" sx={{ color: '#888', display: 'block' }}>
+                            @{entry.persona_username} · {new Date(entry.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#ccc' }}>
+                            {(entry.generated_content || '').substring(0, 120)}{(entry.generated_content || '').length > 120 ? '…' : ''}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Box>
+                  )}
+                </Box>
               </>
             )}
           </Paper>
@@ -2984,15 +3062,24 @@ const Dashboard = () => {
             {aiSettingsLoading ? <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}><CircularProgress size={24} /></Box> : (
               <>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 2, flexWrap: 'wrap' }}>
-                  <TextField label="Min per Post" type="number" value={aiContentSettings.comments_per_post_min} onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_min: parseInt(e.target.value) || 1 }))} onBlur={() => saveAIContentSettings()} inputProps={{ min: 1, max: 10 }} size="small" sx={{ width: 120, '& .MuiOutlinedInput-root': { backgroundColor: '#2a2a2a', color: '#ffffff', '& fieldset': { borderColor: '#444444' } }, '& .MuiInputLabel-root': { color: '#999999' } }} />
-                  <TextField label="Max per Post" type="number" value={aiContentSettings.comments_per_post_max} onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_max: parseInt(e.target.value) || 3 }))} onBlur={() => saveAIContentSettings()} inputProps={{ min: 1, max: 20 }} size="small" sx={{ width: 120, '& .MuiOutlinedInput-root': { backgroundColor: '#2a2a2a', color: '#ffffff', '& fieldset': { borderColor: '#444444' } }, '& .MuiInputLabel-root': { color: '#999999' } }} />
+                  <TextField label="Min per Post" type="number" value={aiContentSettings.comments_per_post_min} onChange={(e) => { setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_min: parseInt(e.target.value) || 1 })); setAiSettingsHasChanges(true); }} inputProps={{ min: 1, max: 10 }} size="small" sx={{ width: 120, '& .MuiOutlinedInput-root': { backgroundColor: '#2a2a2a', color: '#ffffff', '& fieldset': { borderColor: '#444444' } }, '& .MuiInputLabel-root': { color: '#999999' } }} />
+                  <TextField label="Max per Post" type="number" value={aiContentSettings.comments_per_post_max} onChange={(e) => { setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_max: parseInt(e.target.value) || 3 })); setAiSettingsHasChanges(true); }} inputProps={{ min: 1, max: 20 }} size="small" sx={{ width: 120, '& .MuiOutlinedInput-root': { backgroundColor: '#2a2a2a', color: '#ffffff', '& fieldset': { borderColor: '#444444' } }, '& .MuiInputLabel-root': { color: '#999999' } }} />
                   <FormControl size="small" sx={{ minWidth: 160 }}>
-                    <Select value={aiContentSettings.comment_target} onChange={(e) => { const s = { ...aiContentSettings, comment_target: e.target.value }; setAiContentSettings(s); saveAIContentSettings(s); }} sx={{ backgroundColor: '#2a2a2a', color: '#ffffff', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' }, '& .MuiSvgIcon-root': { color: '#999999' } }}>
+                    <Select value={aiContentSettings.comment_target} onChange={(e) => { setAiContentSettings((prev: any) => ({ ...prev, comment_target: e.target.value })); setAiSettingsHasChanges(true); }} sx={{ backgroundColor: '#2a2a2a', color: '#ffffff', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' }, '& .MuiSvgIcon-root': { color: '#999999' } }}>
                       <MenuItem value="ai_only">AI Posts Only</MenuItem>
                       <MenuItem value="all_posts">All Posts</MenuItem>
                       <MenuItem value="mixed">Mixed</MenuItem>
                     </Select>
                   </FormControl>
+                  <Button
+                    variant="contained"
+                    onClick={() => saveAIContentSettings()}
+                    disabled={aiSettingsSaving || !aiSettingsHasChanges}
+                    startIcon={aiSettingsSaving ? <CircularProgress size={14} sx={{ color: '#fff' }} /> : null}
+                    sx={{ backgroundColor: aiSettingsSaved ? '#4caf50' : '#CBB3FF', color: '#1a1a1a', fontWeight: 'bold', '&:hover': { backgroundColor: '#b39ddb' }, '&:disabled': { backgroundColor: '#333', color: '#666' }, minWidth: 120 }}
+                  >
+                    {aiSettingsSaving ? 'Saving...' : aiSettingsSaved ? '✓ Saved' : 'Save Settings'}
+                  </Button>
                   <Button variant="outlined" onClick={handleTestGenerateComment} disabled={aiTestGenerating} startIcon={aiTestGenerating && aiTestGeneratingType === 'comment' ? <CircularProgress size={16} sx={{ color: '#CBB3FF' }} /> : null} sx={{ borderColor: '#CBB3FF', color: '#CBB3FF', '&:hover': { borderColor: '#A9E5BB', backgroundColor: 'rgba(203,179,255,0.1)' } }}>
                     {aiTestGenerating && aiTestGeneratingType === 'comment' ? 'Generating...' : 'Test Generate Comment'}
                   </Button>
@@ -3003,7 +3090,36 @@ const Dashboard = () => {
                     <Typography variant="body2" sx={{ color: '#A9E5BB' }}>Calling Claude Haiku... reading post and writing a contextual reply. This takes 5–15 seconds.</Typography>
                   </Box>
                 )}
-                <Typography variant="body2" sx={{ color: '#888888' }}>When ON, Claude reads each post and writes contextual replies. Min/Max per Post sets how many AI comments each post accumulates over time.</Typography>
+                <Typography variant="body2" sx={{ color: '#888888', mb: 2 }}>When ON, Claude reads each post and writes contextual replies. Each post is assigned a random comment target ({aiContentSettings.comments_per_post_min}–{aiContentSettings.comments_per_post_max}) and comments drip in each hour until the target is reached.</Typography>
+
+                {/* Comment Activity Log */}
+                <Box>
+                  <Button
+                    size="small"
+                    onClick={() => { setCommentLogExpanded(e => !e); if (!commentLogExpanded) fetchAIActivityLog(); }}
+                    sx={{ color: '#666', fontSize: '0.75rem', p: 0, mb: 1, '&:hover': { color: '#999' } }}
+                  >
+                    {commentLogExpanded ? '▾ Hide' : '▸ Show'} Activity Log
+                  </Button>
+                  {commentLogExpanded && (
+                    <Box sx={{ maxHeight: 260, overflowY: 'auto', backgroundColor: '#111', borderRadius: 1, p: 1.5 }}>
+                      {aiActivityLogLoading ? (
+                        <CircularProgress size={18} sx={{ color: '#A9E5BB' }} />
+                      ) : aiActivityLog.filter(e => e.content_type === 'comment').length === 0 ? (
+                        <Typography variant="caption" sx={{ color: '#555' }}>No comment activity yet.</Typography>
+                      ) : aiActivityLog.filter(e => e.content_type === 'comment').map((entry: any) => (
+                        <Box key={entry.id} sx={{ mb: 1, pb: 1, borderBottom: '1px solid #222' }}>
+                          <Typography variant="caption" sx={{ color: '#888', display: 'block' }}>
+                            @{entry.persona_username} · {new Date(entry.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#ccc' }}>
+                            {(entry.generated_content || '').substring(0, 120)}{(entry.generated_content || '').length > 120 ? '…' : ''}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Box>
+                  )}
+                </Box>
               </>
             )}
           </Paper>
@@ -3133,113 +3249,50 @@ const Dashboard = () => {
             ) : (
               <>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 2, flexWrap: 'wrap' }}>
-                  <TextField
-                    label="Min per Post"
-                    type="number"
-                    value={aiContentSettings.comments_per_post_min}
-                    onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_min: parseInt(e.target.value) || 1 }))}
-                    onBlur={() => saveAIContentSettings()}
-                    inputProps={{ min: 1, max: 10 }}
-                    size="small"
-                    sx={{
-                      width: 120,
-                      '& .MuiOutlinedInput-root': {
-                        backgroundColor: '#2a2a2a',
-                        color: '#ffffff',
-                        '& fieldset': { borderColor: '#444444' },
-                        '&:hover fieldset': { borderColor: '#666666' },
-                        '&.Mui-focused fieldset': { borderColor: '#CBB3FF' },
-                      },
-                      '& .MuiInputLabel-root': { color: '#999999' },
-                      '& .MuiInputLabel-root.Mui-focused': { color: '#CBB3FF' },
-                    }}
-                  />
-
-                  <TextField
-                    label="Max per Post"
-                    type="number"
-                    value={aiContentSettings.comments_per_post_max}
-                    onChange={(e) => setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_max: parseInt(e.target.value) || 3 }))}
-                    onBlur={() => saveAIContentSettings()}
-                    inputProps={{ min: 1, max: 20 }}
-                    size="small"
-                    sx={{
-                      width: 120,
-                      '& .MuiOutlinedInput-root': {
-                        backgroundColor: '#2a2a2a',
-                        color: '#ffffff',
-                        '& fieldset': { borderColor: '#444444' },
-                        '&:hover fieldset': { borderColor: '#666666' },
-                        '&.Mui-focused fieldset': { borderColor: '#CBB3FF' },
-                      },
-                      '& .MuiInputLabel-root': { color: '#999999' },
-                      '& .MuiInputLabel-root.Mui-focused': { color: '#CBB3FF' },
-                    }}
-                  />
-
+                  <TextField label="Min per Post" type="number" value={aiContentSettings.comments_per_post_min} onChange={(e) => { setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_min: parseInt(e.target.value) || 1 })); setAiSettingsHasChanges(true); }} inputProps={{ min: 1, max: 10 }} size="small" sx={{ width: 120, '& .MuiOutlinedInput-root': { backgroundColor: '#2a2a2a', color: '#ffffff', '& fieldset': { borderColor: '#444444' } }, '& .MuiInputLabel-root': { color: '#999999' } }} />
+                  <TextField label="Max per Post" type="number" value={aiContentSettings.comments_per_post_max} onChange={(e) => { setAiContentSettings((prev: any) => ({ ...prev, comments_per_post_max: parseInt(e.target.value) || 3 })); setAiSettingsHasChanges(true); }} inputProps={{ min: 1, max: 20 }} size="small" sx={{ width: 120, '& .MuiOutlinedInput-root': { backgroundColor: '#2a2a2a', color: '#ffffff', '& fieldset': { borderColor: '#444444' } }, '& .MuiInputLabel-root': { color: '#999999' } }} />
                   <FormControl size="small" sx={{ minWidth: 160 }}>
-                    <Select
-                      value={aiContentSettings.comment_target}
-                      onChange={(e) => {
-                        const newSettings = { ...aiContentSettings, comment_target: e.target.value };
-                        setAiContentSettings(newSettings);
-                        saveAIContentSettings(newSettings);
-                      }}
-                      sx={{
-                        backgroundColor: '#2a2a2a',
-                        color: '#ffffff',
-                        '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' },
-                        '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#666666' },
-                        '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: '#CBB3FF' },
-                        '& .MuiSvgIcon-root': { color: '#999999' },
-                      }}
-                    >
+                    <Select value={aiContentSettings.comment_target} onChange={(e) => { setAiContentSettings((prev: any) => ({ ...prev, comment_target: e.target.value })); setAiSettingsHasChanges(true); }} sx={{ backgroundColor: '#2a2a2a', color: '#ffffff', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#444444' }, '& .MuiSvgIcon-root': { color: '#999999' } }}>
                       <MenuItem value="ai_only">AI Posts Only</MenuItem>
                       <MenuItem value="all_posts">All Posts</MenuItem>
                       <MenuItem value="mixed">Mixed</MenuItem>
                     </Select>
                   </FormControl>
-                </Box>
-
-                <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-                  <Button
-                    variant="outlined"
-                    onClick={handleTestGenerateComment}
-                    disabled={aiTestGenerating}
-                    startIcon={aiTestGenerating && aiTestGeneratingType === 'comment' ? <CircularProgress size={16} sx={{ color: '#CBB3FF' }} /> : null}
-                    sx={{
-                      borderColor: '#CBB3FF',
-                      color: '#CBB3FF',
-                      '&:hover': {
-                        borderColor: '#A9E5BB',
-                        backgroundColor: 'rgba(203, 179, 255, 0.1)',
-                      },
-                    }}
-                  >
+                  <Button variant="contained" onClick={() => saveAIContentSettings()} disabled={aiSettingsSaving || !aiSettingsHasChanges} startIcon={aiSettingsSaving ? <CircularProgress size={14} sx={{ color: '#fff' }} /> : null} sx={{ backgroundColor: aiSettingsSaved ? '#4caf50' : '#CBB3FF', color: '#1a1a1a', fontWeight: 'bold', '&:hover': { backgroundColor: '#b39ddb' }, '&:disabled': { backgroundColor: '#333', color: '#666' }, minWidth: 120 }}>
+                    {aiSettingsSaving ? 'Saving...' : aiSettingsSaved ? '✓ Saved' : 'Save Settings'}
+                  </Button>
+                  <Button variant="outlined" onClick={handleTestGenerateComment} disabled={aiTestGenerating} startIcon={aiTestGenerating && aiTestGeneratingType === 'comment' ? <CircularProgress size={16} sx={{ color: '#CBB3FF' }} /> : null} sx={{ borderColor: '#CBB3FF', color: '#CBB3FF', '&:hover': { borderColor: '#A9E5BB', backgroundColor: 'rgba(203,179,255,0.1)' } }}>
                     {aiTestGenerating && aiTestGeneratingType === 'comment' ? 'Generating...' : 'Test Generate Comment'}
                   </Button>
-
                 </Box>
 
                 {aiTestGenerating && aiTestGeneratingType === 'comment' && (
                   <Box sx={{ mb: 2 }}>
-                    <LinearProgress
-                      sx={{
-                        backgroundColor: '#333333',
-                        '& .MuiLinearProgress-bar': { backgroundColor: '#A9E5BB' },
-                        borderRadius: 1,
-                        mb: 1
-                      }}
-                    />
-                    <Typography variant="body2" sx={{ color: '#A9E5BB' }}>
-                      Calling Claude Haiku... reading post content and writing a contextual reply. This takes 5–15 seconds.
-                    </Typography>
+                    <LinearProgress sx={{ backgroundColor: '#333333', '& .MuiLinearProgress-bar': { backgroundColor: '#A9E5BB' }, borderRadius: 1, mb: 1 }} />
+                    <Typography variant="body2" sx={{ color: '#A9E5BB' }}>Calling Claude Haiku... reading post content and writing a contextual reply. This takes 5–15 seconds.</Typography>
                   </Box>
                 )}
 
-                <Typography variant="body2" sx={{ color: '#888888' }}>
-                  Min/Max per Post sets how many AI comments each post will accumulate over time (e.g. 3–5 means each post will get between 3 and 5 comments). Claude reads the actual post content and writes contextual replies — not generic responses. Test Generate adds one comment to your first eligible active post immediately.
-                </Typography>
+                <Typography variant="body2" sx={{ color: '#888888', mb: 2 }}>Min/Max per Post sets how many AI comments each post will accumulate. Claude reads each post and writes contextual replies — not generic responses. Test Generate adds one comment to your first eligible active post immediately.</Typography>
+
+                {/* Comment Activity Log (second panel) */}
+                <Box>
+                  <Button size="small" onClick={() => { setCommentLogExpanded(e => !e); if (!commentLogExpanded) fetchAIActivityLog(); }} sx={{ color: '#666', fontSize: '0.75rem', p: 0, mb: 1, '&:hover': { color: '#999' } }}>
+                    {commentLogExpanded ? '▾ Hide' : '▸ Show'} Activity Log
+                  </Button>
+                  {commentLogExpanded && (
+                    <Box sx={{ maxHeight: 260, overflowY: 'auto', backgroundColor: '#111', borderRadius: 1, p: 1.5 }}>
+                      {aiActivityLogLoading ? <CircularProgress size={18} sx={{ color: '#A9E5BB' }} /> : aiActivityLog.filter(e => e.content_type === 'comment').length === 0 ? (
+                        <Typography variant="caption" sx={{ color: '#555' }}>No comment activity yet.</Typography>
+                      ) : aiActivityLog.filter(e => e.content_type === 'comment').map((entry: any) => (
+                        <Box key={entry.id} sx={{ mb: 1, pb: 1, borderBottom: '1px solid #222' }}>
+                          <Typography variant="caption" sx={{ color: '#888', display: 'block' }}>@{entry.persona_username} · {new Date(entry.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</Typography>
+                          <Typography variant="caption" sx={{ color: '#ccc' }}>{(entry.generated_content || '').substring(0, 120)}{(entry.generated_content || '').length > 120 ? '…' : ''}</Typography>
+                        </Box>
+                      ))}
+                    </Box>
+                  )}
+                </Box>
               </>
             )}
           </Paper>
