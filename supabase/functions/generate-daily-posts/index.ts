@@ -52,6 +52,19 @@ Short post examples (match this energy for 50% of posts):
 
 Return ONLY the post text. No quotes, no labels, no metadata.`
 
+const PERSONA_GENERATION_PROMPT = `Generate 20 realistic usernames for real people's social media accounts.
+
+Rules:
+- Formats allowed: firstname+numbers (like "sarah92", "james_04"), firstname only (like "sophie", "marcus"), firstname+initial (like "tomk", "rachj"), name+short number (like "elle7", "kai22")
+- Use common real first names — mix of male and female
+- Numbers should look natural (birth years 94-05, or short numbers 2-99)
+- All lowercase, underscores OK, NO dots, NO hyphens
+- Keep them short: 5-13 characters max
+- BANNED: anything like "name_withword", "namevibes", "namecooks", "namewithcoffee" — no nouns glued to names
+- Should look indistinguishable from real user accounts
+
+Return EXACTLY 20 usernames, one per line. Nothing else.`
+
 async function callClaudeHaiku(prompt: string, apiKey: string, maxTokens = 120): Promise<string> {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -63,6 +76,7 @@ async function callClaudeHaiku(prompt: string, apiKey: string, maxTokens = 120):
     body: JSON.stringify({
       model: 'claude-haiku-4-5',
       max_tokens: maxTokens,
+      temperature: 0.95,
       messages: [{ role: 'user', content: prompt }],
     }),
   })
@@ -73,7 +87,49 @@ async function callClaudeHaiku(prompt: string, apiKey: string, maxTokens = 120):
   }
 
   const data = await response.json()
-  return data.content[0].text
+  return data.content[0].text.trim()
+}
+
+async function initializePersonaPool(supabase: any, apiKey: string): Promise<void> {
+  const { count } = await supabase
+    .from('ai_personas')
+    .select('*', { count: 'exact', head: true })
+
+  if (count && count >= 20) return
+
+  console.log('Initializing persona pool...')
+  const usernamesText = await callClaudeHaiku(PERSONA_GENERATION_PROMPT, apiKey, 300)
+  const usernames = usernamesText.split('\n').filter((u: string) => u.trim().length > 0).slice(0, 20)
+
+  const personas = usernames.map((username: string) => ({
+    username: username.trim(),
+    avatar_color: weightedRandomColor(),
+    personality_note: null
+  }))
+
+  const { error } = await supabase.from('ai_personas').insert(personas)
+  if (error) {
+    console.error('Error inserting personas:', error)
+    throw error
+  }
+
+  const { data: settings } = await supabase
+    .from('app_settings')
+    .select('setting_value')
+    .eq('setting_key', 'ai_content_automation')
+    .single()
+
+  if (settings) {
+    await supabase
+      .from('app_settings')
+      .update({
+        setting_value: { ...settings.setting_value, persona_pool_initialized: true },
+        updated_at: new Date().toISOString()
+      })
+      .eq('setting_key', 'ai_content_automation')
+  }
+
+  console.log(`Created ${personas.length} personas`)
 }
 
 let _realUsernameCache: Set<string> | null = null
@@ -84,11 +140,7 @@ async function getRealUsernames(supabase: any): Promise<Set<string>> {
   return _realUsernameCache
 }
 
-function baseName(username: string): string {
-  return username.toLowerCase().replace(/[^a-z]/g, '').substring(0, 6)
-}
-
-async function getPersona(supabase: any, apiKey: string): Promise<{ username: string; avatarColor: string }> {
+async function getPersona(supabase: any, apiKey: string): Promise<{ username: string; avatarColor: string; source: string }> {
   const realUsernames = await getRealUsernames(supabase)
   const usePool = Math.random() < 0.3
 
@@ -97,7 +149,7 @@ async function getPersona(supabase: any, apiKey: string): Promise<{ username: st
     if (personas && personas.length > 0) {
       const safe = personas.filter((p: any) => !realUsernames.has((p.username || '').toLowerCase()))
       const persona = randomChoice(safe.length > 0 ? safe : personas)
-      return { username: persona.username, avatarColor: weightedRandomColor() }
+      return { username: persona.username, avatarColor: weightedRandomColor(), source: 'pool' }
     }
   }
 
@@ -112,7 +164,7 @@ async function getPersona(supabase: any, apiKey: string): Promise<{ username: st
     if (realUsernames.has(username)) username = `${username}${randomInt(10, 99)}`
   }
 
-  return { username: username || `user_${randomInt(1000, 9999)}`, avatarColor: weightedRandomColor() }
+  return { username: username || `user_${randomInt(1000, 9999)}`, avatarColor: weightedRandomColor(), source: 'random' }
 }
 
 async function generatePost(
@@ -124,7 +176,6 @@ async function generatePost(
 ): Promise<{ id: string; content: string } | null> {
   const rawContent = await callClaudeHaiku(POST_PROMPT, apiKey, 120)
 
-  // Trim to fit DB constraint — cut at sentence boundary so posts never end mid-sentence
   const MAX_CONTENT_LEN = 480
   let content = rawContent.trim()
   if (content.length > MAX_CONTENT_LEN) {
@@ -174,11 +225,11 @@ async function generatePost(
     content_type: 'post',
     content_id: data.id,
     generated_content: content,
-    persona_source: 'generated',
+    persona_source: persona.source,
     persona_username: persona.username,
   })
 
-  console.log(`Scheduled post as @${persona.username} for ${scheduledAt.toISOString()}`)
+  console.log(`Scheduled post as @${persona.username} (${persona.source}) for ${scheduledAt.toISOString()}`)
   return { id: data.id, content }
 }
 
@@ -200,6 +251,9 @@ serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+    // Reset per-invocation cache so warm isolates don't serve stale data
+    _realUsernameCache = null
 
     let body: any = {}
     try { body = await req.json() } catch { /* cron trigger — no body */ }
@@ -229,6 +283,11 @@ serve(async (req) => {
       )
     }
 
+    // Initialize persona pool if needed
+    if (!settings.persona_pool_initialized) {
+      await initializePersonaPool(supabase, anthropicApiKey)
+    }
+
     // Get admin user
     const { data: adminUsers } = await supabase
       .from('user_profiles').select('id').eq('user_type', 'admin').limit(1)
@@ -245,7 +304,6 @@ serve(async (req) => {
     const maxComments = settings.comments_per_post_max || 5
 
     if (!isManualTest) {
-      // Guard: check if we already generated posts today to avoid double-runs
       const todayStart = new Date()
       todayStart.setUTCHours(0, 0, 0, 0)
       const { count: todayCount } = await supabase
@@ -262,20 +320,17 @@ serve(async (req) => {
       }
     }
 
-    // Generate scheduled times spread between 8am–10pm UTC
-    // For manual test, post immediately as active
     const generatedPosts: any[] = []
     const count = isManualTest ? 1 : postsPerDay
 
-    // Build non-overlapping schedule slots across the day
-    const dayStart = 8 * 60  // 8am in minutes
-    const dayEnd = 22 * 60   // 10pm in minutes
+    const dayStart = 8 * 60
+    const dayEnd = 22 * 60
     const slotSize = Math.floor((dayEnd - dayStart) / count)
 
     for (let i = 0; i < count; i++) {
       let scheduledAt: Date
       if (isManualTest) {
-        scheduledAt = new Date() // immediate for test
+        scheduledAt = new Date()
       } else {
         const slotStart = dayStart + i * slotSize
         const slotEnd = slotStart + slotSize
@@ -289,7 +344,6 @@ serve(async (req) => {
       const post = await generatePost(supabase, anthropicApiKey, adminUserId, scheduledAt, targetCommentCount)
 
       if (post) {
-        // For manual test, activate immediately
         if (isManualTest) {
           await supabase
             .from('community_posts')

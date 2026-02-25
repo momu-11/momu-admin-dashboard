@@ -19,31 +19,6 @@ function weightedRandomColor(): string {
   return AVATAR_COLORS[AVATAR_COLORS.length - 1]
 }
 
-const POST_PROMPT = `You are a member of a supportive journaling community app called Momu where people share personal life stories, seek advice, and discuss life challenges and wins.
-
-Generate ONE authentic post. LENGTH IS CRITICAL — follow this distribution strictly:
-- 50% of posts: 1-2 sentences only (short, punchy, raw)
-- 30% of posts: 3-4 sentences (a brief share or question)
-- 20% of posts: 5-6 sentences max (a story or detailed thought)
-
-NEVER write more than 6 sentences. Most posts should be short.
-
-The post should:
-- Feel genuine and personal, like someone opening up to a community they trust
-- Cover any aspect of life: relationships, work stress, bad bosses, personal growth, friendship, family, loneliness, career wins, heartbreak, moving on, daily struggles, happy moments, seeking advice, gratitude
-- Use natural, conversational language with imperfect grammar sometimes (like real people text)
-- NOT use hashtags, emojis in every post, or marketing-speak
-- NOT start with "Hey everyone" or "Hi guys" — vary the openings
-- Sometimes ask for advice, sometimes just vent, sometimes share a win
-
-Short post examples (match this energy for 50% of posts):
-- "finally told my boss I need better boundaries and she actually listened?? still processing"
-- "had the worst anxiety attack at work today. took a walk and just breathed. small wins."
-- "does anyone else feel weird about growing apart from childhood friends?"
-- "can't tell if I'm healing or just getting better at avoiding things"
-
-Return ONLY the post text. No quotes, no labels, no metadata.`
-
 const COMMENT_PROMPT = (postContent: string, existingComments: string[] = []) => {
   const existingBlock = existingComments.length > 0
     ? `\nComments already posted (DO NOT repeat these points or phrases):\n${existingComments.map(c => `- "${c}"`).join('\n')}\n`
@@ -224,84 +199,6 @@ async function getPersona(supabase: any, apiKey: string, existingCommenters: str
   }
 }
 
-async function generatePost(
-  supabase: any,
-  apiKey: string,
-  adminUserId: string,
-  isManualTest: boolean = false
-): Promise<{ id: string; content: string } | null> {
-  const rawContent = await callClaudeHaiku(POST_PROMPT, apiKey, 120)
-
-  // Trim to fit DB constraint — always cut at a sentence boundary so posts never end mid-sentence
-  const MAX_CONTENT_LEN = 480
-  let content = rawContent.trim()
-  if (content.length > MAX_CONTENT_LEN) {
-    const chunk = content.substring(0, MAX_CONTENT_LEN)
-    // Find last sentence ending (., !, ?) within the chunk
-    const lastSentence = Math.max(
-      chunk.lastIndexOf('. '),
-      chunk.lastIndexOf('? '),
-      chunk.lastIndexOf('! '),
-      chunk.lastIndexOf('.\n'),
-      chunk.lastIndexOf('?\n'),
-      chunk.lastIndexOf('!\n'),
-    )
-    if (lastSentence > 200) {
-      content = chunk.substring(0, lastSentence + 1).trimEnd()
-    } else {
-      // Fallback: cut at last word
-      const lastSpace = chunk.lastIndexOf(' ')
-      content = (lastSpace > 200 ? chunk.substring(0, lastSpace) : chunk).trimEnd()
-    }
-  }
-
-  const persona = await getPersona(supabase, apiKey)
-
-  const initialLikes = randomInt(0, 5)
-  const targetLikes = randomInt(8, 25)
-
-  // For manual test: post immediately as active
-  // For automated cron: schedule randomly within the next 1-23 hours
-  const scheduledAt = isManualTest ? null : new Date(Date.now() + randomInt(1, 23) * 60 * 60 * 1000)
-  const status = isManualTest ? 'active' : 'scheduled'
-
-  const { data, error } = await supabase
-    .from('community_posts')
-    .insert({
-      author_id: adminUserId,
-      content: content,
-      display_username: persona.username,
-      avatar_color: persona.avatarColor,
-      display_avatar_color: persona.avatarColor,
-      like_count: initialLikes,
-      comment_count: 0,
-      tags: null,
-      scheduled_at: scheduledAt?.toISOString() ?? null,
-      status: status,
-      is_ai_generated: true,
-      target_like_count: targetLikes
-    })
-    .select('id')
-    .single()
-
-  if (error) {
-    console.error('Error creating AI post:', error)
-    return null
-  }
-
-  // Log the generation
-  await supabase.from('ai_content_log').insert({
-    content_type: 'post',
-    content_id: data.id,
-    generated_content: content,
-    persona_source: persona.source,
-    persona_username: persona.username
-  })
-
-  console.log(`Generated post "${content.substring(0, 50)}..." as ${persona.username} (${persona.source}), ${scheduledAt ? `scheduled for ${scheduledAt.toISOString()}` : 'posted immediately'}`)
-  return { id: data.id, content }
-}
-
 async function generateComment(
   supabase: any,
   apiKey: string,
@@ -440,6 +337,9 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+    // Reset per-invocation caches so warm isolates don't serve stale data
+    _realUsernameCache = null
+
     // Check if this is a manual test request
     let body: any = {}
     try {
@@ -449,7 +349,6 @@ serve(async (req) => {
     }
 
     const isManualTest = body?.test === true
-    const generateType = body?.type || 'both' // 'post', 'comment', or 'both'
 
     // Fetch settings
     const { data: settingsRow, error: settingsError } = await supabase
@@ -499,9 +398,7 @@ serve(async (req) => {
 
     // --- COMMENT GENERATION ONLY ---
     // Post generation is handled by generate-daily-posts (midnight cron)
-    const shouldGenerateComments = isManualTest
-      ? (generateType === 'comment' || generateType === 'both')
-      : settings.comments_enabled
+    const shouldGenerateComments = isManualTest || settings.comments_enabled
 
     if (shouldGenerateComments) {
       const commentTarget = settings.comment_target || 'ai_only'
@@ -530,6 +427,7 @@ serve(async (req) => {
       }
 
       // --- STEP 2: Find posts that haven't hit their comment target yet ---
+      // For 'mixed' mode: fetch all posts, then bias selection toward AI posts (70/30)
       let postsQuery = supabase
         .from('community_posts')
         .select('id, content, is_ai_generated, comment_count, target_comment_count')
@@ -542,9 +440,20 @@ serve(async (req) => {
       }
 
       const { data: eligiblePosts } = await postsQuery
-      const postsNeedingComments = (eligiblePosts || []).filter(
+      let postsNeedingComments = (eligiblePosts || []).filter(
         (p: any) => (p.comment_count || 0) < (p.target_comment_count || 0)
       )
+
+      // 'mixed' mode: bias toward AI posts 70% of the time, real posts 30%
+      if (commentTarget === 'mixed' && postsNeedingComments.length > 1) {
+        const aiPosts = postsNeedingComments.filter((p: any) => p.is_ai_generated)
+        const realPosts = postsNeedingComments.filter((p: any) => !p.is_ai_generated)
+        if (aiPosts.length > 0 && realPosts.length > 0) {
+          postsNeedingComments = Math.random() < 0.7
+            ? aiPosts
+            : realPosts
+        }
+      }
 
       if (isManualTest) {
         const targetPost = postsNeedingComments[0] || eligiblePosts?.[0]
@@ -561,7 +470,7 @@ serve(async (req) => {
       }
     }
 
-    if (isManualTest && results.comments.length === 0 && generateType === 'comment') {
+    if (isManualTest && results.comments.length === 0) {
       return new Response(
         JSON.stringify({ error: 'Comment generation failed — no eligible post found or insert error. Check logs.' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
