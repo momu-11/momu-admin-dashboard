@@ -303,38 +303,50 @@ serve(async (req) => {
     const minComments = settings.comments_per_post_min || 3
     const maxComments = settings.comments_per_post_max || 5
 
-    if (!isManualTest) {
-      const todayStart = new Date()
-      todayStart.setUTCHours(0, 0, 0, 0)
-      const { count: todayCount } = await supabase
-        .from('ai_content_log')
-        .select('*', { count: 'exact', head: true })
-        .eq('content_type', 'post')
-        .gte('created_at', todayStart.toISOString())
+    // How many posts have already been created today?
+    const todayStart = new Date()
+    todayStart.setUTCHours(0, 0, 0, 0)
+    const { count: todayCount } = await supabase
+      .from('ai_content_log')
+      .select('*', { count: 'exact', head: true })
+      .eq('content_type', 'post')
+      .gte('created_at', todayStart.toISOString())
 
-      if ((todayCount || 0) >= postsPerDay) {
-        return new Response(
-          JSON.stringify({ message: `Already generated ${todayCount} posts today`, skipped: true }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        )
-      }
+    const alreadyGenerated = isManualTest ? 0 : (todayCount || 0)
+    const remaining = isManualTest ? 1 : postsPerDay - alreadyGenerated
+
+    if (remaining <= 0) {
+      return new Response(
+        JSON.stringify({ message: `Already generated ${alreadyGenerated} of ${postsPerDay} posts today`, skipped: true }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
 
     const generatedPosts: any[] = []
-    const count = isManualTest ? 1 : postsPerDay
 
-    const dayStart = 8 * 60
+    // Divide the day (8am–10pm UTC) into equal slots, one per post.
+    // Schedule recovery posts only into future slots so we never create a
+    // post scheduled in the past (which would activate immediately and look spammy).
+    const dayStart = 8 * 60   // minutes since midnight
     const dayEnd = 22 * 60
-    const slotSize = Math.floor((dayEnd - dayStart) / count)
+    const slotSize = Math.floor((dayEnd - dayStart) / postsPerDay)
+    const nowMinutes = new Date().getUTCHours() * 60 + new Date().getUTCMinutes()
 
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < remaining; i++) {
       let scheduledAt: Date
       if (isManualTest) {
         scheduledAt = new Date()
       } else {
-        const slotStart = dayStart + i * slotSize
+        // Slot index accounts for already-generated posts so we don't overlap
+        const slotIndex = alreadyGenerated + i
+        const slotStart = dayStart + slotIndex * slotSize
         const slotEnd = slotStart + slotSize
-        const minuteOffset = randomInt(slotStart, slotEnd - 1)
+        // Push the slot forward if it has already passed — pick a random time
+        // between now+5min and end of the next available slot
+        const effectiveStart = Math.max(slotStart, nowMinutes + 5)
+        const effectiveEnd = Math.max(slotEnd, effectiveStart + 10)
+        const minuteOffset = randomInt(effectiveStart, effectiveEnd - 1)
+
         scheduledAt = new Date()
         scheduledAt.setUTCHours(0, 0, 0, 0)
         scheduledAt.setUTCMinutes(minuteOffset)
