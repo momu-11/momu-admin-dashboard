@@ -250,6 +250,8 @@ const Dashboard = () => {
   const [aiActivityLogLoading, setAiActivityLogLoading] = useState<boolean>(false);
   const [postLogExpanded, setPostLogExpanded] = useState<boolean>(false);
   const [commentLogExpanded, setCommentLogExpanded] = useState<boolean>(false);
+  const [aiTodayStatus, setAiTodayStatus] = useState<{ postsCreated: number; postsScheduled: number; postsActive: number; commentsCreated: number; lastPostAt: string | null; lastCommentAt: string | null; } | null>(null);
+  const [aiTodayStatusLoading, setAiTodayStatusLoading] = useState<boolean>(false);
   
   // Support request modal state
   const [selectedSupportRequest, setSelectedSupportRequest] = useState<any>(null);
@@ -1863,6 +1865,65 @@ const Dashboard = () => {
     }
   }, []);
 
+  const fetchAITodayStatus = useCallback(async () => {
+    setAiTodayStatusLoading(true);
+    try {
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+
+      const [postsLog, commentsLog, scheduledRows, activeRows] = await Promise.all([
+        adminSupabase
+          .from('ai_content_log')
+          .select('created_at', { count: 'exact' })
+          .eq('content_type', 'post')
+          .gte('created_at', todayStart.toISOString()),
+        adminSupabase
+          .from('ai_content_log')
+          .select('created_at', { count: 'exact' })
+          .eq('content_type', 'comment')
+          .gte('created_at', todayStart.toISOString()),
+        adminSupabase
+          .from('community_posts')
+          .select('id', { count: 'exact' })
+          .eq('is_ai_generated', true)
+          .eq('status', 'scheduled'),
+        adminSupabase
+          .from('community_posts')
+          .select('id', { count: 'exact' })
+          .eq('is_ai_generated', true)
+          .eq('status', 'active')
+          .gte('created_at', todayStart.toISOString()),
+      ]);
+
+      const lastPost = await adminSupabase
+        .from('ai_content_log')
+        .select('created_at')
+        .eq('content_type', 'post')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      const lastComment = await adminSupabase
+        .from('ai_content_log')
+        .select('created_at')
+        .eq('content_type', 'comment')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      setAiTodayStatus({
+        postsCreated: postsLog.count || 0,
+        postsScheduled: scheduledRows.count || 0,
+        postsActive: activeRows.count || 0,
+        commentsCreated: commentsLog.count || 0,
+        lastPostAt: lastPost.data?.[0]?.created_at || null,
+        lastCommentAt: lastComment.data?.[0]?.created_at || null,
+      });
+    } catch (err) {
+      console.error('Error fetching AI today status:', err);
+    } finally {
+      setAiTodayStatusLoading(false);
+    }
+  }, []);
+
   const saveAIContentSettings = async (updatedSettings?: any) => {
     setAiSettingsSaving(true);
     try {
@@ -1927,7 +1988,7 @@ const Dashboard = () => {
         throw new Error(result.error || 'Failed to generate test post');
       }
 
-      await Promise.all([fetchEngagementPosts(), fetchScheduledPosts(), fetchCommunityPosts(), fetchAIActivityLog()]);
+      await Promise.all([fetchEngagementPosts(), fetchScheduledPosts(), fetchCommunityPosts(), fetchAIActivityLog(), fetchAITodayStatus()]);
       alert(`Test post generated! Post is now live in Community Posts.`);
     } catch (error: any) {
       console.error('Error generating test post:', error);
@@ -1957,7 +2018,7 @@ const Dashboard = () => {
         throw new Error(result.error || 'Failed to generate test comment');
       }
 
-      await Promise.all([fetchAllPosts(), fetchAIActivityLog()]);
+      await Promise.all([fetchAllPosts(), fetchAIActivityLog(), fetchAITodayStatus()]);
       alert(`Test comment generated! ${result.commentsGenerated} comment created.`);
     } catch (error: any) {
       console.error('Error generating test comment:', error);
@@ -1997,13 +2058,14 @@ const Dashboard = () => {
         await fetchIosUpdateSettings();
         await fetchAIContentSettings();
         await fetchAIActivityLog();
+        await fetchAITodayStatus();
       } catch (err) {
         console.error('Error loading initial data:', err);
       }
     };
     
     checkConnection();
-  }, [fetchAllData, fetchEngagementPosts, fetchScheduledPosts, fetchIosUpdateSettings, fetchAIContentSettings, fetchAIActivityLog]);
+  }, [fetchAllData, fetchEngagementPosts, fetchScheduledPosts, fetchIosUpdateSettings, fetchAIContentSettings, fetchAIActivityLog, fetchAITodayStatus]);
 
   // Timer to check scheduled posts every minute
   useEffect(() => {
@@ -2824,6 +2886,75 @@ const Dashboard = () => {
               {showScheduledPosts ? 'Hide' : 'Show'} Scheduled Posts ({scheduledPosts.length})
             </Button>
           </Box>
+
+          {/* Today's AI Status Panel */}
+          <Paper sx={{ backgroundColor: '#1a1a1a', p: 3, mb: 3, border: '1px solid #2a2a2a' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ color: '#ffffff' }}>Today's AI Status</Typography>
+              <Button size="small" onClick={fetchAITodayStatus} disabled={aiTodayStatusLoading} sx={{ color: '#666', fontSize: '0.75rem', '&:hover': { color: '#999' } }}>
+                {aiTodayStatusLoading ? <CircularProgress size={12} sx={{ mr: 1 }} /> : null} Refresh
+              </Button>
+            </Box>
+            {aiTodayStatusLoading && !aiTodayStatus ? (
+              <CircularProgress size={20} sx={{ color: '#CBB3FF' }} />
+            ) : aiTodayStatus ? (
+              <>
+                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+                  {/* Posts Created Today */}
+                  <Box sx={{ backgroundColor: '#222', borderRadius: 2, p: 2, minWidth: 130, flex: 1 }}>
+                    <Typography variant="caption" sx={{ color: '#888', display: 'block', mb: 0.5 }}>Posts Created Today</Typography>
+                    <Typography variant="h5" sx={{ color: aiTodayStatus.postsCreated >= (aiContentSettings.posts_per_day || 2) ? '#4caf50' : '#FFB385', fontWeight: 'bold' }}>
+                      {aiTodayStatus.postsCreated} / {aiContentSettings.posts_per_day || 2}
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: aiTodayStatus.postsCreated >= (aiContentSettings.posts_per_day || 2) ? '#4caf50' : '#888' }}>
+                      {aiTodayStatus.postsCreated >= (aiContentSettings.posts_per_day || 2) ? '✓ Quota met' : `${(aiContentSettings.posts_per_day || 2) - aiTodayStatus.postsCreated} still needed`}
+                    </Typography>
+                  </Box>
+                  {/* Scheduled / Active */}
+                  <Box sx={{ backgroundColor: '#222', borderRadius: 2, p: 2, minWidth: 130, flex: 1 }}>
+                    <Typography variant="caption" sx={{ color: '#888', display: 'block', mb: 0.5 }}>Awaiting Publish</Typography>
+                    <Typography variant="h5" sx={{ color: aiTodayStatus.postsScheduled > 0 ? '#CBB3FF' : '#555', fontWeight: 'bold' }}>
+                      {aiTodayStatus.postsScheduled}
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: '#888' }}>scheduled posts pending</Typography>
+                  </Box>
+                  {/* Active Today */}
+                  <Box sx={{ backgroundColor: '#222', borderRadius: 2, p: 2, minWidth: 130, flex: 1 }}>
+                    <Typography variant="caption" sx={{ color: '#888', display: 'block', mb: 0.5 }}>Live Today</Typography>
+                    <Typography variant="h5" sx={{ color: aiTodayStatus.postsActive > 0 ? '#A9E5BB' : '#555', fontWeight: 'bold' }}>
+                      {aiTodayStatus.postsActive}
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: '#888' }}>posts now active</Typography>
+                  </Box>
+                  {/* Comments Today */}
+                  <Box sx={{ backgroundColor: '#222', borderRadius: 2, p: 2, minWidth: 130, flex: 1 }}>
+                    <Typography variant="caption" sx={{ color: '#888', display: 'block', mb: 0.5 }}>Comments Today</Typography>
+                    <Typography variant="h5" sx={{ color: aiTodayStatus.commentsCreated > 0 ? '#A9E5BB' : '#555', fontWeight: 'bold' }}>
+                      {aiTodayStatus.commentsCreated}
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: '#888' }}>AI comments generated</Typography>
+                  </Box>
+                </Box>
+                {/* Last activity timestamps */}
+                <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                  <Typography variant="caption" sx={{ color: '#555' }}>
+                    Last post generated:{' '}
+                    <span style={{ color: '#888' }}>
+                      {aiTodayStatus.lastPostAt ? new Date(aiTodayStatus.lastPostAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never'}
+                    </span>
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: '#555' }}>
+                    Last comment generated:{' '}
+                    <span style={{ color: '#888' }}>
+                      {aiTodayStatus.lastCommentAt ? new Date(aiTodayStatus.lastCommentAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never'}
+                    </span>
+                  </Typography>
+                </Box>
+              </>
+            ) : (
+              <Typography variant="body2" sx={{ color: '#555' }}>No data yet.</Typography>
+            )}
+          </Paper>
 
           {/* AI Post Automation Box */}
           <Paper sx={{ backgroundColor: '#1a1a1a', p: 3, mb: 3, border: `1px solid ${aiContentSettings.posts_enabled ? '#4caf5055' : '#333'}` }}>
