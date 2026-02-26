@@ -6,9 +6,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Colors: green #A9E5BB 30%, orange #FFB385 30%, purple #CBB3FF 30%, blue #B3E5FC 10%
 const AVATAR_COLORS = ['#A9E5BB', '#FFB385', '#CBB3FF', '#B3E5FC']
 const COLOR_WEIGHTS = [30, 30, 30, 10]
+
 function weightedRandomColor(): string {
   const total = COLOR_WEIGHTS.reduce((a, b) => a + b, 0)
   let r = Math.random() * total
@@ -18,6 +18,35 @@ function weightedRandomColor(): string {
   }
   return AVATAR_COLORS[AVATAR_COLORS.length - 1]
 }
+
+// 250 realistic usernames — varied styles, no formulaic firstname## pattern.
+// Shared with generate-daily-posts so both functions draw from the same identity space.
+const USERNAME_POOL = [
+  'sophie','marcus','ellie','jay_r','tomk','rachj','danm','priya','leo_c','nadia',
+  'sam_w','becc','zara','finn','mia_j','oscar','ruby','alex','jade_l','ethan',
+  'chloe','liam','ava_m','noah','isla','jack','luna','ryan_b','sara','luke',
+  'grace','harry','emma','max_d','lily','charlie','zoe','oliver','ella','george',
+  'hannah','james','emily','will','poppy','ben_k','imogen','joe','molly','dan_r',
+  'tara','mitch','anna_l','drew','kate','henry','lucy','cal','freya','rob',
+  'amber','sean','rosa','kieran','nell','adam','ivy','jake','layla','paul',
+  'claire','patrick','amy','tom_w','helen','luca','nina','ross','jess','evan',
+  'beth','alex_m','dean','skye','cole','leah','mike','phoebe','chris','jasmine',
+  'nat','ryan_c','maya','adam_j','cleo','sean_r','tia','matt','erin','sam_b',
+  'abby','leo','kat','ben','claire_m','finn_r','rosa_l','jay','maya_k','dan_w',
+  'soph','rach','tom','lilyb','jakec','elliem','willh','graced','harryp','evak',
+  'zara_k','mia','luca_b','rob_t','amber_j','nina_r','evan_c','skye_m','cole_r','tia_b',
+  'paige','rhys','freya_j','oscar_l','imogen_r','poppy_k','kieran_m','layla_b','nadia_r','jade',
+  'ed','ali','bex','gio','mar','cam','ash','bri','kai','rei',
+  'noor','luna_b','arya','eden','rio','sage','wren','bay','quinn','blake',
+  'drew_m','charlie_r','sam_j','alex_k','jamie','jo','morgan','taylor','river','remy',
+  'jess_b','kat_r','phoebe_m','leah_j','ella_c','emma_r','zoe_b','isla_m','ava','grace_k',
+  'harry_m','oliver_r','noah_b','liam_k','jack_r','ethan_m','luke_b','james_r','max','george_k',
+  'will_b','ben_r','adam_k','jake_m','matt_r','mike_b','rob_k','sean_j','tom_r','paul_m',
+  'dan_k','evan_r','cole_b','dean_m','ryan_k','cal_r','leo_b','finn_m','rhys_k','ed_r',
+  'sasha','petra','lena','dani','remi','kira','ines','mara','yara','alix',
+  'juno','neve','beau','nell_r','vida','orla','fern','blythe','clove','willa',
+  'arlo','crew','jett','cash','bode','reid','ford','lane','gray','pierce',
+]
 
 const COMMENT_PROMPT = (postContent: string, existingComments: string[] = []) => {
   const existingBlock = existingComments.length > 0
@@ -112,7 +141,6 @@ async function initializePersonaPool(supabase: any, apiKey: string): Promise<voi
     throw error
   }
 
-  // Mark persona pool as initialized in settings
   const { data: settings } = await supabase
     .from('app_settings')
     .select('setting_value')
@@ -132,7 +160,6 @@ async function initializePersonaPool(supabase: any, apiKey: string): Promise<voi
   console.log(`Created ${personas.length} personas`)
 }
 
-// Fetch real usernames once and cache for the duration of this function invocation
 let _realUsernameCache: Set<string> | null = null
 async function getRealUsernames(supabase: any): Promise<Set<string>> {
   if (_realUsernameCache) return _realUsernameCache
@@ -141,17 +168,34 @@ async function getRealUsernames(supabase: any): Promise<Set<string>> {
   return _realUsernameCache
 }
 
-// Extract the base name from a username (e.g. "jessica_88" → "jessica", "tomk" → "tom")
+// Extract base letters only for similarity detection (e.g. "jessica_88" → "jessic")
 function baseName(username: string): string {
   return username.toLowerCase().replace(/[^a-z]/g, '').substring(0, 6)
 }
 
-function clashesWithExisting(username: string, existingCommenters: string[]): boolean {
+// Returns true if username shares a base with any existing commenter on the post
+function clashesWithExisting(username: string, excluded: string[]): boolean {
   const base = baseName(username)
-  return existingCommenters.some(existing => baseName(existing) === base)
+  return excluded.some(existing => baseName(existing) === base)
 }
 
-async function getPersona(supabase: any, apiKey: string, existingCommenters: string[] = []): Promise<{ username: string; avatarColor: string; source: string }> {
+// Pick a username from the 250-name pool that doesn't clash with real users or excluded names
+function pickFromPool(realUsernames: Set<string>, excluded: string[]): string {
+  const shuffled = [...USERNAME_POOL].sort(() => Math.random() - 0.5)
+  for (const name of shuffled) {
+    if (!realUsernames.has(name) && !clashesWithExisting(name, excluded)) {
+      return name
+    }
+  }
+  // Fallback: take any pool name and append a digit
+  const base = randomChoice(USERNAME_POOL)
+  return `${base}${randomInt(2, 9)}`
+}
+
+async function getPersona(
+  supabase: any,
+  excluded: string[] = []
+): Promise<{ username: string; avatarColor: string; source: string }> {
   const realUsernames = await getRealUsernames(supabase)
   const usePool = Math.random() < 0.3
 
@@ -161,76 +205,53 @@ async function getPersona(supabase: any, apiKey: string, existingCommenters: str
       .select('username, avatar_color')
 
     if (personas && personas.length > 0) {
-      // Filter out personas that clash with real users or existing commenters on this post
-      const safePersonas = personas.filter((p: any) => {
+      const safe = personas.filter((p: any) => {
         const u = (p.username || '').toLowerCase()
-        return !realUsernames.has(u) && !clashesWithExisting(u, existingCommenters)
+        return !realUsernames.has(u) && !clashesWithExisting(u, excluded)
       })
-      const pool = safePersonas.length > 0 ? safePersonas : personas
-      const persona = randomChoice(pool)
-      return {
-        username: persona.username,
-        avatarColor: weightedRandomColor(),
-        source: 'pool'
+      if (safe.length > 0) {
+        const persona = randomChoice(safe)
+        return { username: persona.username, avatarColor: weightedRandomColor(), source: 'pool' }
       }
     }
   }
 
-  // Generate a random username via Claude for the 70% case (or fallback)
-  const randomNamePrompt = `Generate ONE realistic username for a real person's account. Just the username, nothing else. Lowercase only, 5-13 characters. Allowed formats: firstname+numbers (e.g. "sarah92", "james_04"), firstname only (e.g. "sophie", "marcus"), firstname+initial (e.g. "tomk", "rachj"), name+short number (e.g. "elle7", "kai22"). BANNED: anything like "name_withword", "name_withcoffee", "namevibes", "namecooks" — no nouns glued to names. No dots, no hyphens. Return username only.`
-  let username = (await callClaudeHaiku(randomNamePrompt, apiKey, 30))
-    .replace(/[^a-zA-Z0-9_]/g, '').substring(0, 20).toLowerCase()
-
-  // Retry once if it clashes with a real user or existing commenter on this post
-  if (!username || realUsernames.has(username) || clashesWithExisting(username, existingCommenters)) {
-    const retryName = (await callClaudeHaiku(randomNamePrompt, apiKey, 30))
-      .replace(/[^a-zA-Z0-9_]/g, '').substring(0, 20).toLowerCase()
-    username = retryName || `user${randomInt(100, 999)}`
-    // Final fallback: append number if still clashing
-    if (realUsernames.has(username) || clashesWithExisting(username, existingCommenters)) {
-      username = `${username}${randomInt(10, 99)}`
-    }
-  }
-
-  return {
-    username: username || `user_${randomInt(1000, 9999)}`,
-    avatarColor: weightedRandomColor(),
-    source: 'random'
-  }
+  const username = pickFromPool(realUsernames, excluded)
+  return { username, avatarColor: weightedRandomColor(), source: 'random' }
 }
 
 async function generateComment(
   supabase: any,
   apiKey: string,
   adminUserId: string,
-  post: { id: string; content: string }
+  post: { id: string; content: string; display_username?: string }
 ): Promise<string | null> {
-  // Fetch existing comments — content for deduplication, usernames to avoid similar names
+  // Fetch existing comments — content for dedup, usernames to avoid clashes
   const { data: existingRows } = await supabase
     .from('community_comments')
     .select('content, display_username')
     .eq('post_id', post.id)
     .order('created_at', { ascending: false })
     .limit(10)
+
   const existingComments: string[] = (existingRows || []).map((r: any) => r.content)
   const existingCommenters: string[] = (existingRows || [])
     .map((r: any) => (r.display_username || '').toLowerCase())
     .filter(Boolean)
 
+  // Also exclude the post author so they can't comment on their own post
+  const postAuthor = (post.display_username || '').toLowerCase()
+  if (postAuthor) existingCommenters.push(postAuthor)
+
   const rawComment = await callClaudeHaiku(COMMENT_PROMPT(post.content, existingComments), apiKey, 150)
 
-  // Cap at sentence boundary (DB constraint is 500)
   const MAX_COMMENT_LEN = 480
   let commentContent = rawComment.trim()
   if (commentContent.length > MAX_COMMENT_LEN) {
     const chunk = commentContent.substring(0, MAX_COMMENT_LEN)
     const lastSentence = Math.max(
-      chunk.lastIndexOf('. '),
-      chunk.lastIndexOf('? '),
-      chunk.lastIndexOf('! '),
-      chunk.lastIndexOf('.\n'),
-      chunk.lastIndexOf('?\n'),
-      chunk.lastIndexOf('!\n'),
+      chunk.lastIndexOf('. '), chunk.lastIndexOf('? '), chunk.lastIndexOf('! '),
+      chunk.lastIndexOf('.\n'), chunk.lastIndexOf('?\n'), chunk.lastIndexOf('!\n'),
     )
     if (lastSentence > 150) {
       commentContent = chunk.substring(0, lastSentence + 1).trimEnd()
@@ -240,7 +261,7 @@ async function generateComment(
     }
   }
 
-  const persona = await getPersona(supabase, apiKey, existingCommenters)
+  const persona = await getPersona(supabase, existingCommenters)
 
   const initialLikes = randomInt(0, 3)
   const targetLikes = randomInt(3, 15)
@@ -266,16 +287,11 @@ async function generateComment(
     return null
   }
 
-  // Update comment count on the post
   try {
     const { error: rpcError } = await supabase.rpc('increment_comment_count', { post_id_param: post.id })
     if (rpcError) {
-      // Fallback: manually increment
       const { data: postData } = await supabase
-        .from('community_posts')
-        .select('comment_count')
-        .eq('id', post.id)
-        .single()
+        .from('community_posts').select('comment_count').eq('id', post.id).single()
       if (postData) {
         await supabase
           .from('community_posts')
@@ -283,28 +299,19 @@ async function generateComment(
           .eq('id', post.id)
       }
     }
-  } catch {
-    // Non-critical — comment was still saved
-  }
+  } catch { /* non-critical */ }
 
-  // Each new AI comment adds 3-5 likes to the post organically
   try {
     const { data: postData } = await supabase
-      .from('community_posts')
-      .select('like_count')
-      .eq('id', post.id)
-      .single()
+      .from('community_posts').select('like_count').eq('id', post.id).single()
     if (postData) {
       await supabase
         .from('community_posts')
         .update({ like_count: (postData.like_count || 0) + randomInt(3, 5) })
         .eq('id', post.id)
     }
-  } catch {
-    // Non-critical
-  }
+  } catch { /* non-critical */ }
 
-  // Log the generation
   await supabase.from('ai_content_log').insert({
     content_type: 'comment',
     content_id: data.id,
@@ -314,7 +321,7 @@ async function generateComment(
     persona_username: persona.username
   })
 
-  console.log(`Generated comment on post ${post.id} as ${persona.username}`)
+  console.log(`Generated comment on post ${post.id} as @${persona.username}`)
   return data.id
 }
 
@@ -336,21 +343,13 @@ serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
-
-    // Reset per-invocation caches so warm isolates don't serve stale data
     _realUsernameCache = null
 
-    // Check if this is a manual test request
     let body: any = {}
-    try {
-      body = await req.json()
-    } catch {
-      // No body — cron trigger
-    }
+    try { body = await req.json() } catch { /* cron trigger — no body */ }
 
     const isManualTest = body?.test === true
 
-    // Fetch settings
     const { data: settingsRow, error: settingsError } = await supabase
       .from('app_settings')
       .select('setting_value')
@@ -366,7 +365,6 @@ serve(async (req) => {
 
     const settings = settingsRow.setting_value
 
-    // If not a manual test, check if comment automation is enabled
     if (!isManualTest && !settings.comments_enabled) {
       return new Response(
         JSON.stringify({ message: 'Comment automation is disabled', skipped: true }),
@@ -374,13 +372,8 @@ serve(async (req) => {
       )
     }
 
-    // Get admin user for author_id
     const { data: adminUsers } = await supabase
-      .from('user_profiles')
-      .select('id')
-      .eq('user_type', 'admin')
-      .limit(1)
-
+      .from('user_profiles').select('id').eq('user_type', 'admin').limit(1)
     const adminUserId = adminUsers?.[0]?.id
     if (!adminUserId) {
       return new Response(
@@ -389,15 +382,12 @@ serve(async (req) => {
       )
     }
 
-    // Initialize persona pool if needed
     if (!settings.persona_pool_initialized) {
       await initializePersonaPool(supabase, anthropicApiKey)
     }
 
     const results: any = { comments: [] }
 
-    // --- COMMENT GENERATION ONLY ---
-    // Post generation is handled by generate-daily-posts (midnight cron)
     const shouldGenerateComments = isManualTest || settings.comments_enabled
 
     if (shouldGenerateComments) {
@@ -405,7 +395,7 @@ serve(async (req) => {
       const minComments = settings.comments_per_post_min || 3
       const maxComments = settings.comments_per_post_max || 5
 
-      // --- STEP 1: Assign target_comment_count to any active posts that don't have one yet ---
+      // Step 1: assign target_comment_count to any active posts that don't have one
       let unassignedQuery = supabase
         .from('community_posts')
         .select('id')
@@ -426,11 +416,10 @@ serve(async (req) => {
         console.log(`Assigned comment targets to ${unassignedPosts.length} posts`)
       }
 
-      // --- STEP 2: Find posts that haven't hit their comment target yet ---
-      // For 'mixed' mode: fetch all posts, then bias selection toward AI posts (70/30)
+      // Step 2: find posts below their target — include display_username so we can exclude the author
       let postsQuery = supabase
         .from('community_posts')
-        .select('id, content, is_ai_generated, comment_count, target_comment_count')
+        .select('id, content, is_ai_generated, comment_count, target_comment_count, display_username')
         .eq('status', 'active')
         .not('target_comment_count', 'is', null)
         .order('created_at', { ascending: false })
@@ -444,14 +433,12 @@ serve(async (req) => {
         (p: any) => (p.comment_count || 0) < (p.target_comment_count || 0)
       )
 
-      // 'mixed' mode: bias toward AI posts 70% of the time, real posts 30%
+      // 'mixed' mode: bias 70% toward AI posts, 30% toward real posts
       if (commentTarget === 'mixed' && postsNeedingComments.length > 1) {
         const aiPosts = postsNeedingComments.filter((p: any) => p.is_ai_generated)
         const realPosts = postsNeedingComments.filter((p: any) => !p.is_ai_generated)
         if (aiPosts.length > 0 && realPosts.length > 0) {
-          postsNeedingComments = Math.random() < 0.7
-            ? aiPosts
-            : realPosts
+          postsNeedingComments = Math.random() < 0.7 ? aiPosts : realPosts
         }
       }
 
