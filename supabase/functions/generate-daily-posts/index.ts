@@ -27,30 +27,67 @@ function randomChoice<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
 }
 
-const POST_PROMPT = `You are a member of a supportive journaling community app called Momu where people share personal life stories, seek advice, and discuss life challenges and wins.
+// Large pool of realistic usernames — varied styles, no formula patterns
+const USERNAME_POOL = [
+  'sophie','marcus','ellie','jay_r','tomk','rachj','danm','priya','leo_c','nadia',
+  'sam_w','becc','zara','finn','mia_j','oscar','ruby','alex','jade_l','ethan',
+  'chloe','liam','ava_m','noah','isla','jack','luna','ryan_b','sara','luke',
+  'grace','harry','emma','max_d','lily','charlie','zoe','oliver','ella','george',
+  'hannah','james','emily','will','poppy','ben_k','imogen','joe','molly','dan_r',
+  'tara','mitch','anna_l','drew','kate','henry','lucy','cal','freya','rob',
+  'amber','sean','rosa','kieran','nell','adam','ivy','jake','layla','paul',
+  'claire','patrick','amy','tom_w','helen','luca','nina','ross','jess','evan',
+  'beth','alex_m','dean','skye','cole','leah','mike','phoebe','chris','jasmine',
+  'nat','ryan','maya','adam_j','cleo','sean_m','tia','matt','erin','sam'
+]
 
-Generate ONE authentic post. LENGTH IS CRITICAL — follow this distribution strictly:
-- 50% of posts: 1-2 sentences only (short, punchy, raw)
-- 30% of posts: 3-4 sentences (a brief share or question)
-- 20% of posts: 5-6 sentences max (a story or detailed thought)
+// Topic buckets — Claude picks from a random one each call to avoid repetition
+const TOPIC_BUCKETS = [
+  'work stress, bad boss, toxic workplace, job hunting, career change, salary negotiation',
+  'friendship drift, growing apart, making new friends as an adult, loneliness',
+  'relationship anxiety, dating, breakups, moving on, situationships',
+  'family tension, difficult parents, sibling issues, setting boundaries with family',
+  'personal growth, therapy, self-awareness, bad habits, building confidence',
+  'money stress, debt, financial anxiety, saving, living paycheck to paycheck',
+  'mental health, anxiety, burnout, rest, needing a break',
+  'small wins, gratitude, unexpected good moments, things finally clicking',
+  'big life decisions, moving cities, changing careers, going back to school',
+  'health, fitness, body image, sleep, energy levels',
+]
 
-NEVER write more than 6 sentences. Most posts should be short.
+const buildPostPrompt = (recentSnippets: string[]) => {
+  const topic = randomChoice(TOPIC_BUCKETS)
+  const avoidBlock = recentSnippets.length > 0
+    ? `\nAvoid these themes — they were recently posted:\n${recentSnippets.map(s => `- "${s}"`).join('\n')}\n`
+    : ''
 
-The post should:
-- Feel genuine and personal, like someone opening up to a community they trust
-- Cover any aspect of life: relationships, work stress, bad bosses, personal growth, friendship, family, loneliness, career wins, heartbreak, moving on, daily struggles, happy moments, seeking advice, gratitude
-- Use natural, conversational language with imperfect grammar sometimes (like real people text)
-- NOT use hashtags, emojis in every post, or marketing-speak
-- NOT start with "Hey everyone" or "Hi guys" — vary the openings
-- Sometimes ask for advice, sometimes just vent, sometimes share a win
+  return `You are a real person posting in Momu, a supportive journaling community where people share raw life moments.
 
-Short post examples (match this energy for 50% of posts):
-- "finally told my boss I need better boundaries and she actually listened?? still processing"
-- "had the worst anxiety attack at work today. took a walk and just breathed. small wins."
-- "does anyone else feel weird about growing apart from childhood friends?"
+Topic area for this post: ${topic}
+${avoidBlock}
+Write ONE authentic post about something in that topic area. CRITICAL LENGTH RULES — pick randomly:
+- 50% chance: exactly 1 sentence. Raw, punchy, real. Like a thought you'd text a friend.
+- 30% chance: 2-3 sentences. A brief situation or question.
+- 20% chance: 4-5 sentences max. A short story or venting moment.
+
+NEVER write more than 5 sentences under any circumstances.
+
+One-sentence examples (use this style 50% of the time):
 - "can't tell if I'm healing or just getting better at avoiding things"
+- "my manager took credit for my idea in the meeting today and I said nothing"
+- "finally booked therapy after putting it off for two years. terrified."
+- "does anyone else feel guilty for not wanting to go home for christmas"
+- "three rejection emails in one day, I'm going to bed"
+- "told my friend the truth for once and she actually thanked me for it"
 
-Return ONLY the post text. No quotes, no labels, no metadata.`
+Style rules:
+- Lowercase is fine, imperfect punctuation is fine
+- No hashtags, no emojis (or max one)
+- Don't start with "Hey everyone", "Hi", or "So I"
+- Sometimes a question, sometimes a statement, sometimes just venting
+
+Return ONLY the post text. Nothing else.`
+}
 
 const PERSONA_GENERATION_PROMPT = `Generate 20 realistic usernames for real people's social media accounts.
 
@@ -140,31 +177,54 @@ async function getRealUsernames(supabase: any): Promise<Set<string>> {
   return _realUsernameCache
 }
 
-async function getPersona(supabase: any, apiKey: string): Promise<{ username: string; avatarColor: string; source: string }> {
-  const realUsernames = await getRealUsernames(supabase)
+// Pick a username that hasn't been used in this batch and isn't a real user
+function pickUsername(realUsernames: Set<string>, usedInBatch: Set<string>): string {
+  const shuffled = [...USERNAME_POOL].sort(() => Math.random() - 0.5)
+  for (const name of shuffled) {
+    if (!realUsernames.has(name) && !usedInBatch.has(name)) {
+      return name
+    }
+  }
+  // Fallback: append a number to a random pool name
+  const base = randomChoice(USERNAME_POOL)
+  return `${base}${randomInt(2, 9)}`
+}
+
+async function getPersona(
+  supabase: any,
+  apiKey: string,
+  realUsernames: Set<string>,
+  usedInBatch: Set<string>
+): Promise<{ username: string; avatarColor: string; source: string }> {
   const usePool = Math.random() < 0.3
 
   if (usePool) {
     const { data: personas } = await supabase.from('ai_personas').select('username, avatar_color')
     if (personas && personas.length > 0) {
-      const safe = personas.filter((p: any) => !realUsernames.has((p.username || '').toLowerCase()))
-      const persona = randomChoice(safe.length > 0 ? safe : personas)
-      return { username: persona.username, avatarColor: weightedRandomColor(), source: 'pool' }
+      const safe = personas.filter((p: any) => {
+        const u = (p.username || '').toLowerCase()
+        return !realUsernames.has(u) && !usedInBatch.has(u)
+      })
+      if (safe.length > 0) {
+        const persona = randomChoice(safe)
+        return { username: persona.username, avatarColor: weightedRandomColor(), source: 'pool' }
+      }
     }
   }
 
-  const randomNamePrompt = `Generate ONE realistic username for a real person's account. Just the username, nothing else. Lowercase only, 5-13 characters. Allowed formats: firstname+numbers (e.g. "sarah92", "james_04"), firstname only (e.g. "sophie", "marcus"), firstname+initial (e.g. "tomk", "rachj"), name+short number (e.g. "elle7", "kai22"). BANNED: anything like "name_withword", "name_withcoffee", "namevibes", "namecooks" — no nouns glued to names. No dots, no hyphens. Return username only.`
-  let username = (await callClaudeHaiku(randomNamePrompt, apiKey, 30))
-    .replace(/[^a-zA-Z0-9_]/g, '').substring(0, 20).toLowerCase()
+  const username = pickUsername(realUsernames, usedInBatch)
+  return { username, avatarColor: weightedRandomColor(), source: 'random' }
+}
 
-  if (!username || realUsernames.has(username)) {
-    const retry = (await callClaudeHaiku(randomNamePrompt, apiKey, 30))
-      .replace(/[^a-zA-Z0-9_]/g, '').substring(0, 20).toLowerCase()
-    username = retry || `user${randomInt(100, 999)}`
-    if (realUsernames.has(username)) username = `${username}${randomInt(10, 99)}`
-  }
-
-  return { username: username || `user_${randomInt(1000, 9999)}`, avatarColor: weightedRandomColor(), source: 'random' }
+// Fetch recent post snippets so Claude avoids repeating themes
+async function getRecentPostSnippets(supabase: any): Promise<string[]> {
+  const { data } = await supabase
+    .from('community_posts')
+    .select('content')
+    .eq('is_ai_generated', true)
+    .order('created_at', { ascending: false })
+    .limit(10)
+  return (data || []).map((p: any) => (p.content || '').substring(0, 80))
 }
 
 async function generatePost(
@@ -172,9 +232,12 @@ async function generatePost(
   apiKey: string,
   adminUserId: string,
   scheduledAt: Date,
-  targetCommentCount: number
+  targetCommentCount: number,
+  recentSnippets: string[],
+  realUsernames: Set<string>,
+  usedInBatch: Set<string>
 ): Promise<{ id: string; content: string } | null> {
-  const rawContent = await callClaudeHaiku(POST_PROMPT, apiKey, 120)
+  const rawContent = await callClaudeHaiku(buildPostPrompt(recentSnippets), apiKey, 150)
 
   const MAX_CONTENT_LEN = 480
   let content = rawContent.trim()
@@ -184,15 +247,17 @@ async function generatePost(
       chunk.lastIndexOf('. '), chunk.lastIndexOf('? '), chunk.lastIndexOf('! '),
       chunk.lastIndexOf('.\n'), chunk.lastIndexOf('?\n'), chunk.lastIndexOf('!\n'),
     )
-    if (lastSentence > 200) {
+    if (lastSentence > 100) {
       content = chunk.substring(0, lastSentence + 1).trimEnd()
     } else {
       const lastSpace = chunk.lastIndexOf(' ')
-      content = (lastSpace > 200 ? chunk.substring(0, lastSpace) : chunk).trimEnd()
+      content = (lastSpace > 100 ? chunk.substring(0, lastSpace) : chunk).trimEnd()
     }
   }
 
-  const persona = await getPersona(supabase, apiKey)
+  const persona = await getPersona(supabase, apiKey, realUsernames, usedInBatch)
+  usedInBatch.add(persona.username)
+
   const initialLikes = randomInt(0, 5)
   const targetLikes = randomInt(8, 25)
 
@@ -251,8 +316,6 @@ serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
-
-    // Reset per-invocation cache so warm isolates don't serve stale data
     _realUsernameCache = null
 
     let body: any = {}
@@ -260,7 +323,6 @@ serve(async (req) => {
 
     const isManualTest = body?.test === true
 
-    // Fetch settings
     const { data: settingsRow, error: settingsError } = await supabase
       .from('app_settings')
       .select('setting_value')
@@ -283,12 +345,10 @@ serve(async (req) => {
       )
     }
 
-    // Initialize persona pool if needed
     if (!settings.persona_pool_initialized) {
       await initializePersonaPool(supabase, anthropicApiKey)
     }
 
-    // Get admin user
     const { data: adminUsers } = await supabase
       .from('user_profiles').select('id').eq('user_type', 'admin').limit(1)
     const adminUserId = adminUsers?.[0]?.id
@@ -303,7 +363,6 @@ serve(async (req) => {
     const minComments = settings.comments_per_post_min || 3
     const maxComments = settings.comments_per_post_max || 5
 
-    // How many posts have already been created today?
     const todayStart = new Date()
     todayStart.setUTCHours(0, 0, 0, 0)
     const { count: todayCount } = await supabase
@@ -322,12 +381,13 @@ serve(async (req) => {
       )
     }
 
-    const generatedPosts: any[] = []
+    // Fetch real usernames and recent post themes once for the whole batch
+    const realUsernames = await getRealUsernames(supabase)
+    const recentSnippets = await getRecentPostSnippets(supabase)
+    const usedInBatch = new Set<string>()
 
-    // Divide the day (8am–10pm UTC) into equal slots, one per post.
-    // Schedule recovery posts only into future slots so we never create a
-    // post scheduled in the past (which would activate immediately and look spammy).
-    const dayStart = 8 * 60   // minutes since midnight
+    const generatedPosts: any[] = []
+    const dayStart = 8 * 60
     const dayEnd = 22 * 60
     const slotSize = Math.floor((dayEnd - dayStart) / postsPerDay)
     const nowMinutes = new Date().getUTCHours() * 60 + new Date().getUTCMinutes()
@@ -337,25 +397,28 @@ serve(async (req) => {
       if (isManualTest) {
         scheduledAt = new Date()
       } else {
-        // Slot index accounts for already-generated posts so we don't overlap
         const slotIndex = alreadyGenerated + i
         const slotStart = dayStart + slotIndex * slotSize
         const slotEnd = slotStart + slotSize
-        // Push the slot forward if it has already passed — pick a random time
-        // between now+5min and end of the next available slot
         const effectiveStart = Math.max(slotStart, nowMinutes + 5)
         const effectiveEnd = Math.max(slotEnd, effectiveStart + 10)
         const minuteOffset = randomInt(effectiveStart, effectiveEnd - 1)
-
         scheduledAt = new Date()
         scheduledAt.setUTCHours(0, 0, 0, 0)
         scheduledAt.setUTCMinutes(minuteOffset)
       }
 
       const targetCommentCount = randomInt(minComments, maxComments)
-      const post = await generatePost(supabase, anthropicApiKey, adminUserId, scheduledAt, targetCommentCount)
+      const post = await generatePost(
+        supabase, anthropicApiKey, adminUserId,
+        scheduledAt, targetCommentCount,
+        recentSnippets, realUsernames, usedInBatch
+      )
 
       if (post) {
+        // Add this post's content to recentSnippets so subsequent posts in the same
+        // batch also avoid repeating its theme
+        recentSnippets.unshift(post.content.substring(0, 80))
         if (isManualTest) {
           await supabase
             .from('community_posts')
