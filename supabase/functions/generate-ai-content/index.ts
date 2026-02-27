@@ -19,45 +19,57 @@ function weightedRandomColor(): string {
   return AVATAR_COLORS[AVATAR_COLORS.length - 1]
 }
 
-// 310 realistic usernames — all verified 5+ characters, varied styles.
-// Shared with generate-daily-posts so both functions draw from the same identity space.
-// getRealUsernames() excludes any name already used by a live real account.
+// 310 names — 70% female, 30% male. All verified 5+ chars, no duplicates.
+// Mix of formats: plain name, NAME_#, NAME##, NAME##letter, NameLetter, NAME#, initials_##
+// getRealUsernames() excludes any name a live real account has already claimed.
 const USERNAME_POOL = [
-  // ── natural first names (5+ chars) ──
-  'sophie','marcus','ellie','priya','nadia','ethan','chloe','grace','harry','emily',
-  'james','molly','henry','freya','amber','kieran','claire','helen','lucas','phoebe',
-  'chris','jasmine','paige','quinn','blake','jamie','morgan','taylor','river','sasha',
-  'petra','blythe','clove','willa','caleb','dylan','mason','logan','olive','hazel',
-  'megan','holly','poppy','layla','imogen','hannah','clara','lydia','naomi','leila',
-  'elise','yasmin','steph','tessa','alana','laura','carly','sarah','regan','corey',
-  'trish','vince','lance','brent','chase','brett','grant','scott','derek','floyd',
-  'marco','dario','elena','irina','katia','sofia','livia','fleur','adele','renee',
-  'esmeq','camil','robin','rowan','avery','reese','riley','casey','drew_k','peyton',
-  'sienna','rafael','delphi','xavier','miriam','thalia','magnus','sorcha','declan','annika',
-  'roisin','kierah','daragh','caoimhe','niamhj',
-  // ── firstname + initial (natural social-media style) ──
-  'oscar_l','holly_r','jay_r','dan_m','leo_c','sam_w','mia_j','jade_l','ryan_b','dan_r',
-  'ben_k','tom_w','helen_r','nina_r','jess_b','alex_m','skye_m','cole_r','tia_b','paige_r',
-  'rhys_j','finn_r','rosa_l','maya_k','dan_w','eva_k','zara_k','luca_b','rob_t','evan_c',
-  'mike_b','rob_k','sean_j','tom_r','paul_m','dan_k','evan_r','cole_b','dean_m','ryan_k',
-  'cal_r','leo_b','finn_m','rhys_k','sam_j','alex_k','zoe_b','isla_m','ava_m','grace_k',
-  'harry_m','oliver_r','noah_b','liam_k','jack_r','ethan_m','luke_b','james_r','max_d','george_k',
-  'will_b','ben_r','adam_k','jake_m','matt_r','adam_j','cleo_r','sean_r','erin_j','sam_b',
-  'abby_j','kat_r','phoebe_m','leah_j','ella_c','emma_r','charlie_r','drew_m','jess_r','beth_r',
-  'ross_j','mitch_r','anna_l','kate_j','henry_b','lucy_b','freya_j','amber_j','kieran_m','layla_b',
-  'nadia_r','imogen_r','poppy_k','orla_j','fern_j','juno_b','wren_j','sage_j','eden_r','arya_j',
-  'noor_j','remi_j','kira_j','lena_j','dani_j','mara_j','yara_j','alix_r','neve_j','beau_j',
-  'vida_j','ines_j','arlo_j','jett_b','cash_r','bode_j','reid_j','ford_r','lane_j','gray_b',
-  'crew_j','ali_b','bex_j','gio_b','cam_r','ash_b','bri_j','kai_b','rio_b','bay_j',
-  'rei_j','nat_j','ivy_b','tara_j','kate_r','drew_b','rosa_m','nell_r','adam_b','jake_b',
-  'paul_b','amy_b','luca_r','nina_b','ross_k','evan_b','beth_k','dean_r','skye_b','cole_k',
-  'mike_r','ruby_l','zara_r','finn_b','emma_k','lily_b','will_k','ella_b','zoe_k','luna_b',
-  'sara_l','luke_r','noah_r','isla_b','jack_b','liam_b','alex_b','sean_b','paul_r','adam_r',
-  'nell_b','maya_b','scott_r','chase_m','avery_k','riley_j','reese_b','rowan_m','casey_r','corey_b',
-  // ── compact run-together styles ──
-  'tomk_r','rachj','lilyb','jakec','elliem','willh','graced','harryp','eddie',
-  'sophiem','marcusr','ellieb','emilyj','morganr','taylorc','cooperb','hunterj',
-  'brooksm','lincolnr','westonj','kendalb','harperr','austinm','carterj','parkerb',
+  // ── plain name — female (60) ──
+  'sophie','claire','emily','grace','molly','freya','amber','helen','phoebe','jasmine',
+  'paige','holly','poppy','layla','imogen','hannah','clara','lydia','naomi','leila',
+  'elise','yasmin','tessa','alana','laura','carly','sarah','megan','hazel','willa',
+  'sasha','nadia','priya','ellie','chloe','elena','sofia','miriam','thalia','sorcha',
+  'sienna','avery','reese','riley','peyton','taylor','morgan','rowan','olive','blythe',
+  'caoimhe','annika','roisin','kierah','renee','fleur','livia','adele','katia','niamhj',
+  // ── plain name — male (30) ──
+  'marcus','ethan','harry','james','henry','kieran','lucas','caleb','dylan','mason',
+  'logan','marco','dario','rafael','xavier','magnus','declan','chase','brett','grant',
+  'scott','derek','corey','lance','vince','floyd','brent','daragh','ronan','oscar',
+  // ── NAME_# — female (35) ──
+  'emma_9','rosa_4','isla_7','lily_3','ella_6','ruby_2','luna_5','anna_8','kate_3','jess_7',
+  'nina_4','abby_9','tara_2','skye_5','nell_6','leah_3','beth_8','erin_7','cleo_4','zara_1',
+  'maya_9','fern_2','neve_5','vida_8','kira_6','lena_3','dani_7','mara_4','yara_2','ines_9',
+  'orla_6','remi_3','ivy_4','zoe_8','tia_9',
+  // ── NAME_# — male (15) ──
+  'finn_9','luca_3','noah_7','liam_2','jack_5','luke_8','adam_4','jake_6','sean_1','paul_9',
+  'cole_3','dean_7','ross_2','mike_6','alex_4',
+  // ── NAME## — female (20) ──
+  'holly22','grace14','amber77','claire33','sarah99','emily44','megan55','hazel66','layla11','poppy88',
+  'elise22','tessa14','alana33','laura88','carly77','freya44','phoebe11','sorcha22','sienna33','ellie99',
+  // ── NAME## — male (10) ──
+  'ethan22','james44','harry11','finn77','luca33','noah99','liam55','jake11','cole22','oscar66',
+  // ── NAME##letter — female (30) ──
+  'emma22r','lily88k','isla14j','ella33b','ruby77m','luna44r','anna99k','kate11j','jess66b','nina22m',
+  'abby88r','tara33k','skye77j','leah44b','beth11m','erin66r','cleo99k','zara22j','maya88b','fern33m',
+  'neve77r','vida11k','kira44j','lena99b','dani22m','mara66r','yara88k','ines14j','orla77b','remi44m',
+  // ── NAME##letter — male (15) ──
+  'marcus22r','ethan88k','harry14j','caleb77m','dylan33b','mason22r','logan88k','marco14j','rafael33b','xavier22r',
+  'magnus88k','declan33m','kieran77b','chase14r','brett22k',
+  // ── NameLetter — female (40) ──
+  'sophiem','claireb','emmaj','hollyr','gracek','mollyj','freyam','amberr','helenk','phoebem',
+  'paiged','poppyr','laylab','hannahm','clarar','lydiak','naomib','leilam','elisem','yasminr',
+  'tessaj','alanam','laurak','carlyr','sarahm','meganr','hazelk','willaj','sasham','nadiab',
+  'priyak','ellier','chloem','elenaj','sofiab','miriamr','siennam','averyk','reeser','rileyb',
+  // ── NameLetter — male (10) ──
+  'marcusb','ethanr','harrym','jamesk','henrym','kieranr','lucasb','calebm','dylanr','masonk',
+  // ── NAME# — female (20) ──
+  'claire3','sarah7','emily4','grace5','molly8','amber2','helen9','freya1','poppy6','layla3',
+  'hannah7','clara4','lydia8','naomi2','laura5','elise9','tessa1','megan6','hazel3','chloe7',
+  // ── NAME# — male (8) ──
+  'marcus3','ethan7','harry4','james5','henry8','logan2','oscar9','caleb1',
+  // ── initials_## — female (12) ──
+  'em_88','sr_44','hg_77','ak_22','lm_99','cp_33','nj_66','yb_11','fp_44','mk_88','ek_77','pr_22',
+  // ── initials_## — male (5) ──
+  'mb_44','ej_77','hs_22','dk_99','lr_55',
 ]
 
 const COMMENT_PROMPT = (postContent: string, existingComments: string[] = []) => {
