@@ -217,15 +217,27 @@ async function getRealUsernames(supabase: any): Promise<Set<string>> {
   return _realUsernameCache
 }
 
-// Pick a username that hasn't been used in this batch and isn't a real user
+// Extract the alphabetic base of a username — e.g. "emma22r" → "emma", "holly_r" → "holly"
+function baseName(u: string): string {
+  return u.replace(/[^a-z]/g, '').replace(/\d+.*$/, '')
+}
+
+// Pick a username that hasn't been used in this batch and isn't a real user.
+// Also prevents similar base names (e.g. "sophie" and "sophiem") appearing on the same day.
 function pickUsername(realUsernames: Set<string>, usedInBatch: Set<string>): string {
+  const usedBases = new Set([...usedInBatch].map(baseName))
   const shuffled = [...USERNAME_POOL].sort(() => Math.random() - 0.5)
+  for (const name of shuffled) {
+    if (!realUsernames.has(name) && !usedInBatch.has(name) && !usedBases.has(baseName(name))) {
+      return name
+    }
+  }
+  // Fallback: exact name not already used (relax base-name check if pool is exhausted)
   for (const name of shuffled) {
     if (!realUsernames.has(name) && !usedInBatch.has(name)) {
       return name
     }
   }
-  // Fallback: append a number to a random pool name
   const base = randomChoice(USERNAME_POOL)
   return `${base}${randomInt(2, 9)}`
 }
@@ -424,7 +436,17 @@ serve(async (req) => {
     // Fetch real usernames and recent post themes once for the whole batch
     const realUsernames = await getRealUsernames(supabase)
     const recentSnippets = await getRecentPostSnippets(supabase)
-    const usedInBatch = new Set<string>()
+
+    // Pre-seed usedInBatch with any usernames already posted TODAY so that
+    // subsequent cron runs (6am, noon, 6pm) can't reuse a name from an earlier run
+    const { data: todayLogs } = await supabase
+      .from('ai_content_log')
+      .select('persona_username')
+      .eq('content_type', 'post')
+      .gte('created_at', todayStart.toISOString())
+    const usedInBatch = new Set<string>(
+      (todayLogs || []).map((r: any) => (r.persona_username || '').toLowerCase()).filter(Boolean)
+    )
 
     const generatedPosts: any[] = []
     const dayStart = 8 * 60
