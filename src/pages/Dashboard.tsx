@@ -2865,26 +2865,42 @@ const Dashboard = () => {
             <Typography variant="h4" sx={{ color: '#ffffff', fontWeight: 'bold' }}>
               Engagement Posts Management
             </Typography>
-            <Button
-              variant={showScheduledPosts ? "contained" : "outlined"}
-              onClick={() => {
-                setShowScheduledPosts(!showScheduledPosts);
-                if (!showScheduledPosts) {
-                  fetchScheduledPosts();
-                }
-              }}
-              sx={{
-                color: showScheduledPosts ? '#000000' : '#CBB3FF',
-                backgroundColor: showScheduledPosts ? '#CBB3FF' : 'transparent',
-                borderColor: '#CBB3FF',
-                '&:hover': {
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                variant="outlined"
+                onClick={() => Promise.all([fetchEngagementPosts(), fetchScheduledPosts(), fetchCommunityPosts()])}
+                sx={{
+                  color: '#A9E5BB',
                   borderColor: '#A9E5BB',
-                  backgroundColor: showScheduledPosts ? '#A9E5BB' : 'rgba(203, 179, 255, 0.1)',
-                },
-              }}
-            >
-              {showScheduledPosts ? 'Hide' : 'Show'} Scheduled Posts ({scheduledPosts.length})
-            </Button>
+                  minWidth: 'unset',
+                  px: 1.5,
+                  '&:hover': { borderColor: '#A9E5BB', backgroundColor: 'rgba(169, 229, 187, 0.1)' },
+                }}
+                title="Refresh posts"
+              >
+                ↻
+              </Button>
+              <Button
+                variant={showScheduledPosts ? "contained" : "outlined"}
+                onClick={() => {
+                  setShowScheduledPosts(!showScheduledPosts);
+                  if (!showScheduledPosts) {
+                    fetchScheduledPosts();
+                  }
+                }}
+                sx={{
+                  color: showScheduledPosts ? '#000000' : '#CBB3FF',
+                  backgroundColor: showScheduledPosts ? '#CBB3FF' : 'transparent',
+                  borderColor: '#CBB3FF',
+                  '&:hover': {
+                    borderColor: '#A9E5BB',
+                    backgroundColor: showScheduledPosts ? '#A9E5BB' : 'rgba(203, 179, 255, 0.1)',
+                  },
+                }}
+              >
+                {showScheduledPosts ? 'Hide' : 'Show'} Scheduled Posts ({scheduledPosts.length})
+              </Button>
+            </Box>
           </Box>
 
           {/* Today's AI Status Panel */}
