@@ -95,17 +95,22 @@ const TOPIC_BUCKETS = [
   'health, fitness, body image, sleep, energy levels',
 ]
 
-const buildPostPrompt = (recentSnippets: string[]) => {
-  const topic = randomChoice(TOPIC_BUCKETS)
+// Returns both the prompt string and the chosen topic so the caller can track used topics
+const buildPostPrompt = (recentSnippets: string[], usedTopics: Set<string>): { prompt: string; topic: string } => {
+  // Prefer topic buckets not used yet today — prevents two posts in the same run
+  // landing on the same emotional area (e.g. two therapy/self-sabotage posts)
+  const availableTopics = TOPIC_BUCKETS.filter(t => !usedTopics.has(t))
+  const topic = randomChoice(availableTopics.length > 0 ? availableTopics : TOPIC_BUCKETS)
+
   const avoidBlock = recentSnippets.length > 0
-    ? `\nAvoid these themes — they were recently posted:\n${recentSnippets.map(s => `- "${s}"`).join('\n')}\n`
+    ? `\nThese posts already exist — DO NOT write anything with similar themes, wording, or emotional situations. If they mention therapy, self-sabotage, a specific relationship situation, etc., write about something completely different:\n${recentSnippets.map(s => `- "${s}"`).join('\n')}\n`
     : ''
 
-  return `You are a real person posting in Momu, a supportive journaling community where people share raw life moments.
+  const prompt = `You are a real person posting in Momu, a supportive journaling community where people share raw life moments.
 
 Topic area for this post: ${topic}
 ${avoidBlock}
-Write ONE authentic post about something in that topic area. CRITICAL LENGTH RULES — pick randomly:
+Write ONE authentic post about something in that topic area that is CLEARLY DIFFERENT from any posts listed above. CRITICAL LENGTH RULES — pick randomly:
 - 50% chance: exactly 1 sentence. Raw, punchy, real. Like a thought you'd text a friend.
 - 30% chance: 2-3 sentences. A brief situation or question.
 - 20% chance: 4-5 sentences max. A short story or venting moment.
@@ -127,6 +132,8 @@ Style rules:
 - Sometimes a question, sometimes a statement, sometimes just venting
 
 Return ONLY the post text. Nothing else.`
+
+  return { prompt, topic }
 }
 
 const PERSONA_GENERATION_PROMPT = `Generate 20 realistic usernames for real people's social media accounts.
@@ -268,15 +275,16 @@ async function getPersona(
   return { username, avatarColor: weightedRandomColor(), source: 'random' }
 }
 
-// Fetch recent post snippets so Claude avoids repeating themes
+// Fetch recent post snippets so Claude avoids repeating themes.
+// Uses 200 chars so Claude gets enough context to recognise the theme, not just the opening words.
 async function getRecentPostSnippets(supabase: any): Promise<string[]> {
   const { data } = await supabase
     .from('community_posts')
     .select('content')
     .eq('is_ai_generated', true)
     .order('created_at', { ascending: false })
-    .limit(10)
-  return (data || []).map((p: any) => (p.content || '').substring(0, 80))
+    .limit(20)
+  return (data || []).map((p: any) => (p.content || '').substring(0, 200))
 }
 
 async function generatePost(
@@ -287,9 +295,12 @@ async function generatePost(
   targetCommentCount: number,
   recentSnippets: string[],
   realUsernames: Set<string>,
-  usedInBatch: Set<string>
+  usedInBatch: Set<string>,
+  usedTopics: Set<string>
 ): Promise<{ id: string; content: string } | null> {
-  const rawContent = await callClaudeHaiku(buildPostPrompt(recentSnippets), apiKey, 150)
+  const { prompt, topic } = buildPostPrompt(recentSnippets, usedTopics)
+  usedTopics.add(topic)
+  const rawContent = await callClaudeHaiku(prompt, apiKey, 150)
 
   const MAX_CONTENT_LEN = 480
   let content = rawContent.trim()
@@ -437,8 +448,10 @@ serve(async (req) => {
     const realUsernames = await getRealUsernames(supabase)
     const recentSnippets = await getRecentPostSnippets(supabase)
 
-    // Pre-seed usedInBatch with any usernames already posted TODAY so that
-    // subsequent cron runs (6am, noon, 6pm) can't reuse a name from an earlier run
+    // Pre-seed usedInBatch with usernames already posted TODAY so subsequent
+    // cron runs (6am, noon, 6pm) can't reuse a name from an earlier run.
+    // Also extract which topic buckets were already used today from the snippets
+    // so we don't repeat the same emotional area twice in one day.
     const { data: todayLogs } = await supabase
       .from('ai_content_log')
       .select('persona_username')
@@ -446,6 +459,17 @@ serve(async (req) => {
       .gte('created_at', todayStart.toISOString())
     const usedInBatch = new Set<string>(
       (todayLogs || []).map((r: any) => (r.persona_username || '').toLowerCase()).filter(Boolean)
+    )
+    // Infer which topic buckets were already covered today by checking if any
+    // topic keywords appear in recent snippets — rough but effective
+    const usedTopics = new Set<string>(
+      TOPIC_BUCKETS.filter(bucket =>
+        bucket.split(', ').some(keyword =>
+          recentSnippets.slice(0, alreadyGenerated).some(snippet =>
+            snippet.toLowerCase().includes(keyword.split(' ')[0].toLowerCase())
+          )
+        )
+      )
     )
 
     const generatedPosts: any[] = []
@@ -474,7 +498,7 @@ serve(async (req) => {
       const post = await generatePost(
         supabase, anthropicApiKey, adminUserId,
         scheduledAt, targetCommentCount,
-        recentSnippets, realUsernames, usedInBatch
+        recentSnippets, realUsernames, usedInBatch, usedTopics
       )
 
       if (post) {
