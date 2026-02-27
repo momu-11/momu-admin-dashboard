@@ -19,33 +19,45 @@ function weightedRandomColor(): string {
   return AVATAR_COLORS[AVATAR_COLORS.length - 1]
 }
 
-// 250 realistic usernames — varied styles, no formulaic firstname## pattern.
+// 310 realistic usernames — all verified 5+ characters, varied styles.
 // Shared with generate-daily-posts so both functions draw from the same identity space.
+// getRealUsernames() excludes any name already used by a live real account.
 const USERNAME_POOL = [
-  'sophie','marcus','ellie','jay_r','tomk','rachj','danm','priya','leo_c','nadia',
-  'sam_w','becc','zara','finn','mia_j','oscar','ruby','alex','jade_l','ethan',
-  'chloe','liam','ava_m','noah','isla','jack','luna','ryan_b','sara','luke',
-  'grace','harry','emma','max_d','lily','charlie','zoe','oliver','ella','george',
-  'hannah','james','emily','will','poppy','ben_k','imogen','joe','molly','dan_r',
-  'tara','mitch','anna_l','drew','kate','henry','lucy','cal','freya','rob',
-  'amber','sean','rosa','kieran','nell','adam','ivy','jake','layla','paul',
-  'claire','patrick','amy','tom_w','helen','luca','nina','ross','jess','evan',
-  'beth','alex_m','dean','skye','cole','leah','mike','phoebe','chris','jasmine',
-  'nat','ryan_c','maya','adam_j','cleo','sean_r','tia','matt','erin','sam_b',
-  'abby','leo','kat','ben','claire_m','finn_r','rosa_l','jay','maya_k','dan_w',
-  'soph','rach','tom','lilyb','jakec','elliem','willh','graced','harryp','evak',
-  'zara_k','mia','luca_b','rob_t','amber_j','nina_r','evan_c','skye_m','cole_r','tia_b',
-  'paige','rhys','freya_j','oscar_l','imogen_r','poppy_k','kieran_m','layla_b','nadia_r','jade',
-  'ed','ali','bex','gio','mar','cam','ash','bri','kai','rei',
-  'noor','luna_b','arya','eden','rio','sage','wren','bay','quinn','blake',
-  'drew_m','charlie_r','sam_j','alex_k','jamie','jo','morgan','taylor','river','remy',
-  'jess_b','kat_r','phoebe_m','leah_j','ella_c','emma_r','zoe_b','isla_m','ava','grace_k',
-  'harry_m','oliver_r','noah_b','liam_k','jack_r','ethan_m','luke_b','james_r','max','george_k',
-  'will_b','ben_r','adam_k','jake_m','matt_r','mike_b','rob_k','sean_j','tom_r','paul_m',
-  'dan_k','evan_r','cole_b','dean_m','ryan_k','cal_r','leo_b','finn_m','rhys_k','ed_r',
-  'sasha','petra','lena','dani','remi','kira','ines','mara','yara','alix',
-  'juno','neve','beau','nell_r','vida','orla','fern','blythe','clove','willa',
-  'arlo','crew','jett','cash','bode','reid','ford','lane','gray','pierce',
+  // ── natural first names (5+ chars) ──
+  'sophie','marcus','ellie','priya','nadia','ethan','chloe','grace','harry','emily',
+  'james','molly','henry','freya','amber','kieran','claire','helen','lucas','phoebe',
+  'chris','jasmine','paige','quinn','blake','jamie','morgan','taylor','river','sasha',
+  'petra','blythe','clove','willa','caleb','dylan','mason','logan','olive','hazel',
+  'megan','holly','poppy','layla','imogen','hannah','clara','lydia','naomi','leila',
+  'elise','yasmin','steph','tessa','alana','laura','carly','sarah','regan','corey',
+  'trish','vince','lance','brent','chase','brett','grant','scott','derek','floyd',
+  'marco','dario','elena','irina','katia','sofia','livia','fleur','adele','renee',
+  'esmeq','camil','robin','rowan','avery','reese','riley','casey','drew_k','peyton',
+  'sienna','rafael','delphi','xavier','miriam','thalia','magnus','sorcha','declan','annika',
+  'roisin','kierah','daragh','caoimhe','niamhj',
+  // ── firstname + initial (natural social-media style) ──
+  'oscar_l','holly_r','jay_r','dan_m','leo_c','sam_w','mia_j','jade_l','ryan_b','dan_r',
+  'ben_k','tom_w','helen_r','nina_r','jess_b','alex_m','skye_m','cole_r','tia_b','paige_r',
+  'rhys_j','finn_r','rosa_l','maya_k','dan_w','eva_k','zara_k','luca_b','rob_t','evan_c',
+  'mike_b','rob_k','sean_j','tom_r','paul_m','dan_k','evan_r','cole_b','dean_m','ryan_k',
+  'cal_r','leo_b','finn_m','rhys_k','sam_j','alex_k','zoe_b','isla_m','ava_m','grace_k',
+  'harry_m','oliver_r','noah_b','liam_k','jack_r','ethan_m','luke_b','james_r','max_d','george_k',
+  'will_b','ben_r','adam_k','jake_m','matt_r','adam_j','cleo_r','sean_r','erin_j','sam_b',
+  'abby_j','kat_r','phoebe_m','leah_j','ella_c','emma_r','charlie_r','drew_m','jess_r','beth_r',
+  'ross_j','mitch_r','anna_l','kate_j','henry_b','lucy_b','freya_j','amber_j','kieran_m','layla_b',
+  'nadia_r','imogen_r','poppy_k','orla_j','fern_j','juno_b','wren_j','sage_j','eden_r','arya_j',
+  'noor_j','remi_j','kira_j','lena_j','dani_j','mara_j','yara_j','alix_r','neve_j','beau_j',
+  'vida_j','ines_j','arlo_j','jett_b','cash_r','bode_j','reid_j','ford_r','lane_j','gray_b',
+  'crew_j','ali_b','bex_j','gio_b','cam_r','ash_b','bri_j','kai_b','rio_b','bay_j',
+  'rei_j','nat_j','ivy_b','tara_j','kate_r','drew_b','rosa_m','nell_r','adam_b','jake_b',
+  'paul_b','amy_b','luca_r','nina_b','ross_k','evan_b','beth_k','dean_r','skye_b','cole_k',
+  'mike_r','ruby_l','zara_r','finn_b','emma_k','lily_b','will_k','ella_b','zoe_k','luna_b',
+  'sara_l','luke_r','noah_r','isla_b','jack_b','liam_b','alex_b','sean_b','paul_r','adam_r',
+  'nell_b','maya_b','scott_r','chase_m','avery_k','riley_j','reese_b','rowan_m','casey_r','corey_b',
+  // ── compact run-together styles ──
+  'tomk_r','rachj','lilyb','jakec','elliem','willh','graced','harryp','eddie',
+  'sophiem','marcusr','ellieb','emilyj','morganr','taylorc','cooperb','hunterj',
+  'brooksm','lincolnr','westonj','kendalb','harperr','austinm','carterj','parkerb',
 ]
 
 const COMMENT_PROMPT = (postContent: string, existingComments: string[] = []) => {
