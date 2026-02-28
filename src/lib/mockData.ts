@@ -1575,11 +1575,20 @@ export const getCommunityStats = async (period: 'day' | 'threeDay' | 'week' | 'm
 };
 
 // Onboarding Analytics functions
-export const getOnboardingAnalytics = async () => {
+export const getOnboardingAnalytics = async (options?: { startDate?: string; endDate?: string }) => {
   try {
-    const { data, error } = await adminSupabase
+    let query = adminSupabase
       .from('onboarding_events')
-      .select('step_name, event_type');
+      .select('step_name, event_type, created_at');
+
+    if (options?.startDate) {
+      query = query.gte('created_at', options.startDate);
+    }
+    if (options?.endDate) {
+      query = query.lte('created_at', options.endDate);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching onboarding analytics:', error);
@@ -1624,21 +1633,46 @@ export const getOnboardingAnalytics = async () => {
     ];
 
     // Convert to array and calculate completion rates
-    const analytics = stepOrder
-      .filter(stepName => stepStats.has(stepName))
-      .map(stepName => {
-        const stats = stepStats.get(stepName)!;
-        const completion_rate = stats.views > 0 
-          ? Math.round((stats.completions / stats.views) * 1000) / 10 
-          : 0;
-        
-        return {
-          step_name: stepName,
-          views: stats.views,
-          completions: stats.completions,
-          completion_rate
-        };
-      });
+    const filteredSteps = stepOrder.filter(stepName => stepStats.has(stepName));
+    
+    // Use completions as the "sessions that passed this step" signal.
+    // completions[N] reliably equals views[N+1] in a sequential onboarding flow,
+    // making it the best proxy for funnel depth without a user_id.
+    const firstStepCompletions = filteredSteps.length > 0
+      ? (stepStats.get(filteredSteps[0])?.completions ?? 0)
+      : 0;
+
+    const analytics = filteredSteps.map((stepName, index) => {
+      const stats = stepStats.get(stepName)!;
+      const completion_rate = stats.views > 0 
+        ? Math.round((stats.completions / stats.views) * 1000) / 10 
+        : 0;
+
+      const funnel_pct = firstStepCompletions > 0
+        ? Math.round((stats.completions / firstStepCompletions) * 1000) / 10
+        : 0;
+
+      let step_dropoff: number | null = null;
+      let sessions_lost: number | null = null;
+      if (index > 0) {
+        const prevStats = stepStats.get(filteredSteps[index - 1])!;
+        const prevCompletions = prevStats.completions;
+        sessions_lost = prevCompletions - stats.completions;
+        step_dropoff = prevCompletions > 0
+          ? Math.round((sessions_lost / prevCompletions) * 1000) / 10
+          : null;
+      }
+
+      return {
+        step_name: stepName,
+        views: stats.views,
+        completions: stats.completions,
+        completion_rate,
+        funnel_pct,
+        step_dropoff,
+        sessions_lost,
+      };
+    });
 
     return { data: analytics, error: null };
   } catch (error) {
