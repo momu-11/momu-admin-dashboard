@@ -3693,20 +3693,11 @@ const Dashboard = () => {
       };
 
       const rawSandboxData = [
-        { step_name: 'welcome',               views: 10000, completions: 9200,  completion_rate: 92.0 },
-        { step_name: 'reason',                views: 9200,  completions: 7400,  completion_rate: 80.4 },
-        { step_name: 'mood-check',            views: 7400,  completions: 6900,  completion_rate: 93.2 },
-        { step_name: 'journaling-experience', views: 6900,  completions: 6600,  completion_rate: 95.7 },
-        { step_name: 'user-details',          views: 6600,  completions: 5800,  completion_rate: 87.9 },
-        { step_name: 'solution',              views: 5800,  completions: 5500,  completion_rate: 94.8 },
-        { step_name: 'chart',                 views: 5500,  completions: 5400,  completion_rate: 98.2 },
-        { step_name: 'goals',                 views: 5400,  completions: 5200,  completion_rate: 96.3 },
-        { step_name: 'time-preference',       views: 5200,  completions: 5100,  completion_rate: 98.1 },
-        { step_name: 'testimonials',          views: 5100,  completions: 4900,  completion_rate: 96.1 },
-        { step_name: 'referral',              views: 4900,  completions: 4700,  completion_rate: 95.9 },
-        { step_name: 'outcome-preview',       views: 4700,  completions: 4500,  completion_rate: 95.7 },
-        { step_name: 'paywall',               views: 4500,  completions: 1800,  completion_rate: 40.0 },
-        { step_name: 'special-offer',         views: 1800,  completions: 1400,  completion_rate: 77.8 },
+        { step_name: 'testimonials',  views: 10000, completions: 9400,  completion_rate: 94.0 },
+        { step_name: 'trial_step1',   views: 9400,  completions: 8800,  completion_rate: 93.6 },
+        { step_name: 'trial_step2',   views: 8800,  completions: 8500,  completion_rate: 96.6 },
+        { step_name: 'paywall',       views: 8500,  completions: 3400,  completion_rate: 40.0 },
+        { step_name: 'special-offer', views: 3400,  completions: 2650,  completion_rate: 77.9 },
       ];
       const sandboxData = buildDerivedData(rawSandboxData);
 
@@ -3735,6 +3726,17 @@ const Dashboard = () => {
         fetchOnboardingAnalytics(value);
       };
 
+      const formatStepName = (name: string) => {
+        const labels: Record<string, string> = {
+          'testimonials':  'Testimonials',
+          'trial_step1':   'Trial Step 1',
+          'trial_step2':   'Trial Step 2',
+          'paywall':       'Paywall',
+          'special-offer': 'Special Offer',
+        };
+        return labels[name] ?? name.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      };
+
       return (
         <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
           <Paper sx={{ backgroundColor: '#2a2a2a', p: 4, borderRadius: 2 }}>
@@ -3744,7 +3746,7 @@ const Dashboard = () => {
                   Onboarding Funnel
                 </Typography>
                 <Typography variant="body2" sx={{ color: '#888888', mt: 0.5 }}>
-                  Sessions that passed each step · drop-off from previous step
+                  testimonials → trial_step1 → trial_step2 → paywall → special-offer · unique sessions, deduplicated by session_id
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
@@ -3825,8 +3827,8 @@ const Dashboard = () => {
             )}
 
             {!useSandboxData && (
-              <Alert severity="warning" sx={{ mb: 3, mt: 2, backgroundColor: '#1a1a1a', color: '#ff9800', border: '1px solid #ff9800' }}>
-                <strong>Note:</strong> "Sessions Passed" uses the <em>completions</em> count, which is the most reliable signal in the current tracking setup. Views may be inaccurate due to back-navigation double-counting.
+              <Alert severity="info" sx={{ mb: 3, mt: 2, backgroundColor: '#1a1a1a', color: '#888888', border: '1px solid #3a3a3a' }}>
+                <strong>Note:</strong> Counts are deduplicated by <em>session_id</em> — back-navigation won't inflate numbers. "Sessions Passed" reflects unique sessions that completed each step.
               </Alert>
             )}
 
@@ -3876,7 +3878,7 @@ const Dashboard = () => {
                                 {index + 1}
                               </Typography>
                               <Typography sx={{ fontSize: '0.875rem' }}>
-                                {step.step_name}
+                                {formatStepName(step.step_name)}
                               </Typography>
                             </Box>
                           </TableCell>

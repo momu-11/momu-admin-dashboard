@@ -1575,11 +1575,32 @@ export const getCommunityStats = async (period: 'day' | 'threeDay' | 'week' | 'm
 };
 
 // Onboarding Analytics functions
+//
+// Tracked steps and their event type mappings:
+//   testimonials  → step_viewed (view)       + step_completed (conversion)
+//   trial_step1   → step_viewed (view)       + step_completed (conversion)
+//   trial_step2   → step_viewed (view)       + step_completed (conversion)
+//   paywall       → paywall_viewed (view)    + purchase_completed (conversion)
+//   special-offer → special_offer_viewed (view) + special_offer_converted (conversion)
+
+const TRACKED_STEPS: Record<string, { viewEvent: string; completionEvent: string }> = {
+  'testimonials':  { viewEvent: 'step_viewed',           completionEvent: 'step_completed'          },
+  'trial_step1':   { viewEvent: 'step_viewed',           completionEvent: 'step_completed'           },
+  'trial_step2':   { viewEvent: 'step_viewed',           completionEvent: 'step_completed'           },
+  'paywall':       { viewEvent: 'paywall_viewed',        completionEvent: 'purchase_completed'       },
+  'special-offer': { viewEvent: 'special_offer_viewed',  completionEvent: 'special_offer_converted'  },
+};
+
+const STEP_ORDER = ['testimonials', 'trial_step1', 'trial_step2', 'paywall', 'special-offer'];
+
 export const getOnboardingAnalytics = async (options?: { startDate?: string; endDate?: string }) => {
   try {
+    // Only fetch rows for the 5 tracked steps
+    const trackedStepNames = Object.keys(TRACKED_STEPS);
     let query = adminSupabase
       .from('onboarding_events')
-      .select('step_name, event_type, created_at');
+      .select('step_name, event_type, session_id, created_at')
+      .in('step_name', trackedStepNames);
 
     if (options?.startDate) {
       query = query.gte('created_at', options.startDate);
@@ -1595,49 +1616,40 @@ export const getOnboardingAnalytics = async (options?: { startDate?: string; end
       return { data: null, error };
     }
 
-    // Process the data to calculate views, completions, and completion rates
-    const stepStats = new Map<string, { views: number; completions: number }>();
-    
+    // Count unique sessions per step for views and completions
+    const stepViews = new Map<string, Set<string>>();
+    const stepCompletions = new Map<string, Set<string>>();
+
     data?.forEach((event: any) => {
-      if (!event.step_name) return;
-      
-      if (!stepStats.has(event.step_name)) {
-        stepStats.set(event.step_name, { views: 0, completions: 0 });
-      }
-      
-      const stats = stepStats.get(event.step_name)!;
-      
-      if (event.event_type === 'step_viewed') {
-        stats.views++;
-      } else if (event.event_type === 'step_completed') {
-        stats.completions++;
+      const stepName: string = event.step_name;
+      const config = TRACKED_STEPS[stepName];
+      if (!config) return;
+
+      const sessionKey = event.session_id ?? `anon-${event.created_at}`;
+
+      if (event.event_type === config.viewEvent) {
+        if (!stepViews.has(stepName)) stepViews.set(stepName, new Set());
+        stepViews.get(stepName)!.add(sessionKey);
+      } else if (event.event_type === config.completionEvent) {
+        if (!stepCompletions.has(stepName)) stepCompletions.set(stepName, new Set());
+        stepCompletions.get(stepName)!.add(sessionKey);
       }
     });
 
-    // Define the order of steps
-    const stepOrder = [
-      'welcome',
-      'reason',
-      'mood-check',
-      'journaling-experience',
-      'user-details',
-      'solution',
-      'chart',
-      'goals',
-      'time-preference',
-      'testimonials',
-      'referral',
-      'outcome-preview',
-      'paywall',
-      'special-offer'
-    ];
+    const stepStats = new Map<string, { views: number; completions: number }>();
+    trackedStepNames.forEach(name => {
+      stepStats.set(name, {
+        views: stepViews.get(name)?.size ?? 0,
+        completions: stepCompletions.get(name)?.size ?? 0,
+      });
+    });
 
-    // Convert to array and calculate completion rates
-    const filteredSteps = stepOrder.filter(stepName => stepStats.has(stepName));
-    
-    // Use completions as the "sessions that passed this step" signal.
-    // completions[N] reliably equals views[N+1] in a sequential onboarding flow,
-    // making it the best proxy for funnel depth without a user_id.
+    const filteredSteps = STEP_ORDER.filter(s => {
+      const stats = stepStats.get(s);
+      return stats && (stats.views > 0 || stats.completions > 0);
+    });
+
+    // Use the first step's completions as the funnel baseline
     const firstStepCompletions = filteredSteps.length > 0
       ? (stepStats.get(filteredSteps[0])?.completions ?? 0)
       : 0;
