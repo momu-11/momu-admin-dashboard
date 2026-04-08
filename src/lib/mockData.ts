@@ -1575,39 +1575,36 @@ export const getCommunityStats = async (period: 'day' | 'threeDay' | 'week' | 'm
 };
 
 // Onboarding Analytics functions
-//
-// Tracked steps and their event type mappings:
-//   testimonials  → step_viewed (view)       + step_completed (conversion)
-//   trial_step1   → step_viewed (view)       + step_completed (conversion)
-//   trial_step2   → step_viewed (view)       + step_completed (conversion)
-//   paywall       → paywall_viewed (view)    + purchase_completed (conversion)
-//   special-offer → special_offer_viewed (view) + special_offer_converted (conversion)
+// Dynamic funnel — no hardcoded step list.
+// All step_names that exist in the DB are discovered and ordered by their
+// average chronological position within each device's session.
 
-const TRACKED_STEPS: Record<string, { viewEvent: string; completionEvent: string }> = {
-  'testimonials':  { viewEvent: 'step_viewed',           completionEvent: 'step_completed'          },
-  'trial_step1':   { viewEvent: 'step_viewed',           completionEvent: 'step_completed'           },
-  'trial_step2':   { viewEvent: 'step_viewed',           completionEvent: 'step_completed'           },
-  'paywall':       { viewEvent: 'paywall_viewed',        completionEvent: 'purchase_completed'       },
-  'special-offer': { viewEvent: 'special_offer_viewed',  completionEvent: 'special_offer_converted'  },
-};
-
-const STEP_ORDER = ['testimonials', 'trial_step1', 'trial_step2', 'paywall', 'special-offer'];
+// Which event_types count as a "view" or "completion" for any step.
+// Covers all known variants so adding a new screen just requires firing one of these.
+const VIEW_EVENT_TYPES = new Set([
+  'step_viewed',
+  'paywall_viewed',
+  'special_offer_viewed',
+  'offer_viewed',             // alternative naming
+]);
+const COMPLETION_EVENT_TYPES = new Set([
+  'step_completed',
+  'purchase_completed',
+  'special_offer_converted',
+  'offer_purchased',          // alternative naming
+  'trial_started',            // free-trial start (if fired separately)
+]);
 
 export const getOnboardingAnalytics = async (options?: { startDate?: string; endDate?: string }) => {
   try {
-    // Only fetch rows for the 5 tracked steps
-    const trackedStepNames = Object.keys(TRACKED_STEPS);
+    // Fetch every event — no step_name filter so we capture the full funnel.
     let query = adminSupabase
       .from('onboarding_events')
-      .select('step_name, event_type, session_id, created_at')
-      .in('step_name', trackedStepNames);
+      .select('step_name, event_type, device_id, created_at')
+      .order('created_at', { ascending: true });
 
-    if (options?.startDate) {
-      query = query.gte('created_at', options.startDate);
-    }
-    if (options?.endDate) {
-      query = query.lte('created_at', options.endDate);
-    }
+    if (options?.startDate) query = query.gte('created_at', options.startDate);
+    if (options?.endDate)   query = query.lte('created_at', options.endDate);
 
     const { data, error } = await query;
 
@@ -1616,80 +1613,120 @@ export const getOnboardingAnalytics = async (options?: { startDate?: string; end
       return { data: null, error };
     }
 
-    // Count unique sessions per step for views and completions
-    const stepViews = new Map<string, Set<string>>();
+    // ── Build per-step view/completion sets ──────────────────────────────
+    const stepViews       = new Map<string, Set<string>>();
     const stepCompletions = new Map<string, Set<string>>();
+
+    // ── Track average position of each step within each device's session ─
+    // For each device, record the first time each step_name was viewed,
+    // then compute the median ordinal rank across all devices.
+    const deviceStepOrder = new Map<string, Map<string, number>>(); // device -> step -> created_at ms
 
     data?.forEach((event: any) => {
       const stepName: string = event.step_name;
-      const config = TRACKED_STEPS[stepName];
-      if (!config) return;
+      if (!stepName) return;
 
-      const sessionKey = event.session_id ?? `anon-${event.created_at}`;
+      const deviceKey = event.device_id ?? `anon-${event.created_at}`;
+      const ts = new Date(event.created_at).getTime();
 
-      if (event.event_type === config.viewEvent) {
+      if (VIEW_EVENT_TYPES.has(event.event_type)) {
         if (!stepViews.has(stepName)) stepViews.set(stepName, new Set());
-        stepViews.get(stepName)!.add(sessionKey);
-      } else if (event.event_type === config.completionEvent) {
+        stepViews.get(stepName)!.add(deviceKey);
+
+        // Record earliest view timestamp per step per device
+        if (!deviceStepOrder.has(deviceKey)) deviceStepOrder.set(deviceKey, new Map());
+        const existing = deviceStepOrder.get(deviceKey)!.get(stepName);
+        if (existing === undefined || ts < existing) {
+          deviceStepOrder.get(deviceKey)!.set(stepName, ts);
+        }
+      }
+
+      if (COMPLETION_EVENT_TYPES.has(event.event_type)) {
         if (!stepCompletions.has(stepName)) stepCompletions.set(stepName, new Set());
-        stepCompletions.get(stepName)!.add(sessionKey);
+        stepCompletions.get(stepName)!.add(deviceKey);
       }
     });
 
-    const stepStats = new Map<string, { views: number; completions: number }>();
-    trackedStepNames.forEach(name => {
-      stepStats.set(name, {
-        views: stepViews.get(name)?.size ?? 0,
-        completions: stepCompletions.get(name)?.size ?? 0,
+    // ── Order steps by average ordinal rank across all devices ────────────
+    // For each device, sort their steps by timestamp and assign rank 0,1,2…
+    // Then average that rank across all devices to get a stable funnel order.
+    const stepRankSums   = new Map<string, number>();
+    const stepRankCounts = new Map<string, number>();
+
+    deviceStepOrder.forEach(stepTimestamps => {
+      const ordered = Array.from(stepTimestamps.entries())
+        .sort((a, b) => a[1] - b[1]);
+      ordered.forEach(([stepName], rank) => {
+        stepRankSums.set(stepName, (stepRankSums.get(stepName) ?? 0) + rank);
+        stepRankCounts.set(stepName, (stepRankCounts.get(stepName) ?? 0) + 1);
       });
     });
 
-    const filteredSteps = STEP_ORDER.filter(s => {
-      const stats = stepStats.get(s);
-      return stats && (stats.views > 0 || stats.completions > 0);
+    const allStepNames = Array.from(
+      new Set([...Array.from(stepViews.keys()), ...Array.from(stepCompletions.keys())])
+    ).sort((a, b) => {
+      const avgA = stepRankCounts.get(a)
+        ? (stepRankSums.get(a) ?? 0) / stepRankCounts.get(a)! : Infinity;
+      const avgB = stepRankCounts.get(b)
+        ? (stepRankSums.get(b) ?? 0) / stepRankCounts.get(b)! : Infinity;
+      if (avgA !== avgB) return avgA - avgB;
+      // Tie-break: more views = earlier in funnel
+      return (stepViews.get(b)?.size ?? 0) - (stepViews.get(a)?.size ?? 0);
     });
 
-    // Use the first step's completions as the funnel baseline
-    const firstStepCompletions = filteredSteps.length > 0
-      ? (stepStats.get(filteredSteps[0])?.completions ?? 0)
+    // ── Compute funnel metrics ────────────────────────────────────────────
+    const firstStepViews = allStepNames.length > 0
+      ? (stepViews.get(allStepNames[0])?.size ?? 0)
       : 0;
 
-    const analytics = filteredSteps.map((stepName, index) => {
-      const stats = stepStats.get(stepName)!;
-      const completion_rate = stats.views > 0 
-        ? Math.round((stats.completions / stats.views) * 1000) / 10 
+    const analytics = allStepNames.map((stepName, index) => {
+      const views       = stepViews.get(stepName)?.size ?? 0;
+      const completions = stepCompletions.get(stepName)?.size ?? 0;
+
+      const completion_rate = views > 0
+        ? Math.round((completions / views) * 1000) / 10
         : 0;
 
-      const funnel_pct = firstStepCompletions > 0
-        ? Math.round((stats.completions / firstStepCompletions) * 1000) / 10
+      const funnel_pct = firstStepViews > 0
+        ? Math.round((views / firstStepViews) * 1000) / 10
         : 0;
 
       let step_dropoff: number | null = null;
       let sessions_lost: number | null = null;
       if (index > 0) {
-        const prevStats = stepStats.get(filteredSteps[index - 1])!;
-        const prevCompletions = prevStats.completions;
-        sessions_lost = prevCompletions - stats.completions;
-        step_dropoff = prevCompletions > 0
-          ? Math.round((sessions_lost / prevCompletions) * 1000) / 10
+        const prevViews = stepViews.get(allStepNames[index - 1])?.size ?? 0;
+        sessions_lost   = prevViews - views;
+        step_dropoff    = prevViews > 0
+          ? Math.round((sessions_lost / prevViews) * 1000) / 10
           : null;
       }
 
-      return {
-        step_name: stepName,
-        views: stats.views,
-        completions: stats.completions,
-        completion_rate,
-        funnel_pct,
-        step_dropoff,
-        sessions_lost,
-      };
+      return { step_name: stepName, views, completions, completion_rate, funnel_pct, step_dropoff, sessions_lost };
     });
 
     return { data: analytics, error: null };
   } catch (error) {
     console.error('Exception in getOnboardingAnalytics:', error);
     return { data: null, error };
+  }
+};
+
+export const deleteOnboardingEvents = async (period: '7d' | '30d' | '90d' | 'all') => {
+  try {
+    let query = adminSupabase.from('onboarding_events').delete();
+    if (period !== 'all') {
+      const days = period === '7d' ? 7 : period === '30d' ? 30 : 90;
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      query = (query as any).gte('created_at', cutoff.toISOString());
+    } else {
+      // Supabase requires a filter — match every row by checking id is not null
+      query = (query as any).not('id', 'is', null);
+    }
+    const { error } = await query;
+    return { error: error ?? null };
+  } catch (err) {
+    return { error: err };
   }
 };
 

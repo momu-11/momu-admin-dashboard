@@ -59,7 +59,7 @@ export interface OnboardingAnalytics {
   views: number;
   completions: number;
   completion_rate: number;
-  funnel_pct: number;       // % of sessions that reached this step vs step 1
+  funnel_pct: number;       // % of unique devices that reached this step vs step 1
   step_dropoff: number | null; // % dropped between previous step and this one
-  sessions_lost: number | null; // absolute sessions lost from previous step
+  sessions_lost: number | null; // absolute devices lost from previous step
 } 

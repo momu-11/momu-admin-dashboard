@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Box, Container, Paper, Alert, Typography, CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button, AppBar, Toolbar, TextField, Card, CardContent, Avatar, Dialog, DialogTitle, DialogContent, IconButton, Pagination, Select, MenuItem, FormControl, ImageList, ImageListItem, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Switch, FormControlLabel, LinearProgress } from '@mui/material';
+import { Box, Container, Paper, Alert, Typography, CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, Button, AppBar, Toolbar, TextField, Card, CardContent, Avatar, Dialog, DialogTitle, DialogContent, DialogActions, IconButton, Pagination, Select, MenuItem, FormControl, ImageList, ImageListItem, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Switch, FormControlLabel, LinearProgress } from '@mui/material';
 import { Close as CloseIcon, Visibility as VisibilityIcon, CalendarToday as CalendarIcon, Delete as DeleteIcon, Menu as MenuIcon, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, People as PeopleIcon, AdminPanelSettings as AdminPanelSettingsIcon, Support as SupportIcon, Report as ReportIcon, CardGiftcard as CardGiftcardIcon, Block as BlockIcon, PostAdd as PostAddIcon, Analytics as AnalyticsIcon, Home as HomeIcon, Settings as SettingsIcon, TrendingUp as TrendingUpIcon, Refresh as RefreshIcon } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { Navigate } from 'react-router-dom';
-import { supabase, getUsers, getPlayers, getSupportRequests, getReports, getUserPosts, getUserComments, deletePost, deleteComment, sendNotification, getUserNotifications, updateSupportRequestStatus, updateReportStatus, deleteReport, getReferralCodes, getReferralRedemptions, deleteSupportRequest, getUserById, getBannedUsers, banUser, unbanUser, getOnboardingAnalytics, getUserStats, getSubscriptionStats, getSupportStats, getReportStats, getPopularReferralCodes, getCommunityStats, UserStats, SubscriptionStats, SupportStats, ReportStats, ReferralCodeStats, CommunityStats } from '../lib/mockData';
+import { supabase, getUsers, getPlayers, getSupportRequests, getReports, getUserPosts, getUserComments, deletePost, deleteComment, sendNotification, getUserNotifications, updateSupportRequestStatus, updateReportStatus, deleteReport, getReferralCodes, getReferralRedemptions, deleteSupportRequest, getUserById, getBannedUsers, banUser, unbanUser, getOnboardingAnalytics, deleteOnboardingEvents, getUserStats, getSubscriptionStats, getSupportStats, getReportStats, getPopularReferralCodes, getCommunityStats, UserStats, SubscriptionStats, SupportStats, ReportStats, ReferralCodeStats, CommunityStats } from '../lib/mockData';
 import { adminSupabase, getSupportScreenshotUrl } from '../lib/supabase';
 
 // Screenshot Display Component
@@ -298,6 +298,10 @@ const Dashboard = () => {
   const [onboardingAnalyticsLoading, setOnboardingAnalyticsLoading] = useState<boolean>(false);
   const [useSandboxData, setUseSandboxData] = useState<boolean>(false);
   const [onboardingDateRange, setOnboardingDateRange] = useState<'7d' | '30d' | '90d' | 'all'>('30d');
+  const [wipeDialogOpen, setWipeDialogOpen] = useState(false);
+  const [wipePeriod, setWipePeriod] = useState<'7d' | '30d' | '90d' | 'all'>('7d');
+  const [isWiping, setIsWiping] = useState(false);
+  const [wipeError, setWipeError] = useState<string | null>(null);
   
   // Home dashboard stats state
   const [userStats, setUserStats] = useState<UserStats | null>(null);
@@ -3678,26 +3682,38 @@ const Dashboard = () => {
 
     const renderOnboardingAnalytics = () => {
       const buildDerivedData = (raw: { step_name: string; views: number; completions: number; completion_rate: number }[]) => {
-        const firstCompletions = raw.length > 0 ? raw[0].completions : 0;
+        const firstViews = raw.length > 0 ? raw[0].views : 0;
         return raw.map((step, index) => {
-          const funnel_pct = firstCompletions > 0
-            ? Math.round((step.completions / firstCompletions) * 1000) / 10
+          const funnel_pct = firstViews > 0
+            ? Math.round((step.views / firstViews) * 1000) / 10
             : 0;
-          const prevCompletions = index > 0 ? raw[index - 1].completions : null;
-          const sessions_lost = prevCompletions !== null ? prevCompletions - step.completions : null;
-          const step_dropoff = prevCompletions !== null && prevCompletions > 0
-            ? Math.round(((prevCompletions - step.completions) / prevCompletions) * 1000) / 10
+          const prevViews = index > 0 ? raw[index - 1].views : null;
+          const sessions_lost = prevViews !== null ? prevViews - step.views : null;
+          const step_dropoff = prevViews !== null && prevViews > 0
+            ? Math.round(((prevViews - step.views) / prevViews) * 1000) / 10
             : null;
           return { ...step, funnel_pct, step_dropoff, sessions_lost };
         });
       };
 
       const rawSandboxData = [
-        { step_name: 'testimonials',  views: 10000, completions: 9400,  completion_rate: 94.0 },
-        { step_name: 'trial_step1',   views: 9400,  completions: 8800,  completion_rate: 93.6 },
-        { step_name: 'trial_step2',   views: 8800,  completions: 8500,  completion_rate: 96.6 },
-        { step_name: 'paywall',       views: 8500,  completions: 3400,  completion_rate: 40.0 },
-        { step_name: 'special-offer', views: 3400,  completions: 2650,  completion_rate: 77.9 },
+        { step_name: 'Welcome',              views: 10000, completions: 9800,  completion_rate: 98.0 },
+        { step_name: 'JournalingExperience', views: 9800,  completions: 9600,  completion_rate: 97.9 },
+        { step_name: 'Username',             views: 9600,  completions: 9400,  completion_rate: 97.9 },
+        { step_name: 'PrivacyTrust',         views: 9400,  completions: 9300,  completion_rate: 98.9 },
+        { step_name: 'MoodCheck',            views: 9300,  completions: 9200,  completion_rate: 98.9 },
+        { step_name: 'Reason',               views: 9200,  completions: 9100,  completion_rate: 98.9 },
+        { step_name: 'Chart',                views: 9100,  completions: 9000,  completion_rate: 98.9 },
+        { step_name: 'Goals',                views: 9000,  completions: 8900,  completion_rate: 98.9 },
+        { step_name: 'TimePreference',       views: 8900,  completions: 8800,  completion_rate: 98.9 },
+        { step_name: 'Referral',             views: 8800,  completions: 8750,  completion_rate: 99.4 },
+        { step_name: 'Transition',           views: 8750,  completions: 8700,  completion_rate: 99.4 },
+        { step_name: 'Summary',              views: 8700,  completions: 8650,  completion_rate: 99.4 },
+        { step_name: 'Testimonials',         views: 8650,  completions: 8600,  completion_rate: 99.4 },
+        { step_name: 'TrialStep1',           views: 8600,  completions: 8200,  completion_rate: 95.3 },
+        { step_name: 'TrialStep2',           views: 8200,  completions: 8000,  completion_rate: 97.6 },
+        { step_name: 'Paywall',              views: 8000,  completions: 3200,  completion_rate: 40.0 },
+        { step_name: 'SpecialOfferScreen',   views: 4800,  completions: 3744,  completion_rate: 78.0 },
       ];
       const sandboxData = buildDerivedData(rawSandboxData);
 
@@ -3710,9 +3726,22 @@ const Dashboard = () => {
 
       const displayData = useSandboxData ? sandboxData : liveData;
       const isLoading = useSandboxData ? false : onboardingAnalyticsLoading;
-      const isEmpty = useSandboxData ? false : displayData.length === 0;
 
-      const maxCompletions = displayData.length > 0 ? displayData[0].completions : 1;
+
+      // Summary metrics
+      const totalEntry = displayData.find(s => s.views > 0)?.views ?? 0;
+      const isPaywallName  = (n: string) => ['paywall', 'Paywall'].includes(n);
+      const isOfferName    = (n: string) => ['special-offer', 'special_offer', 'SpecialOfferScreen', 'special_offer_screen', 'specialofferscreen'].includes(n);
+      const paywallStep      = displayData.find(s => isPaywallName(s.step_name));
+      const specialOfferStep = displayData.find(s => isOfferName(s.step_name));
+      const paywallViews = paywallStep?.views ?? 0;
+      const purchases = paywallStep?.completions ?? 0;
+      const offerViews = specialOfferStep?.views ?? 0;
+      const offerConversions = specialOfferStep?.completions ?? 0;
+      const purchaseRate = paywallViews > 0 ? (purchases / paywallViews * 100) : 0;
+      const offerConvRate = offerViews > 0 ? (offerConversions / offerViews * 100) : 0;
+      const overallPurchaseRate = totalEntry > 0 ? (purchases / totalEntry * 100) : 0;
+      const paywallReachRate = totalEntry > 0 ? (paywallViews / totalEntry * 100) : 0;
 
       const dateRangeOptions: { value: '7d' | '30d' | '90d' | 'all'; label: string }[] = [
         { value: '7d',  label: '7d'  },
@@ -3728,16 +3757,50 @@ const Dashboard = () => {
 
       const formatStepName = (name: string) => {
         const labels: Record<string, string> = {
-          'testimonials':  'Testimonials',
-          'trial_step1':   'Trial Step 1',
-          'trial_step2':   'Trial Step 2',
-          'paywall':       'Paywall',
-          'special-offer': 'Special Offer',
+          // Exact PascalCase names from the app
+          'Welcome':              'Welcome',
+          'JournalingExperience': 'Journaling Experience',
+          'Username':             'Username',
+          'PrivacyTrust':         'Privacy & Trust',
+          'MoodCheck':            'Mood Check',
+          'Reason':               'Reason',
+          'Chart':                'Chart',
+          'Goals':                'Goals',
+          'TimePreference':       'Time Preference',
+          'Referral':             'Referral',
+          'Transition':           'Transition',
+          'Summary':              'Summary',
+          'Testimonials':         'Testimonials',
+          'TrialStep1':           'Trial Step 1',
+          'TrialStep2':           'Trial Step 2',
+          'Paywall':              'Paywall',
+          'SpecialOfferScreen':   'Special Offer',
+          // snake_case / kebab-case fallbacks
+          'welcome':              'Welcome',
+          'journaling_experience':'Journaling Experience',
+          'username':             'Username',
+          'privacy_trust':        'Privacy & Trust',
+          'mood_check':           'Mood Check',
+          'reason':               'Reason',
+          'chart':                'Chart',
+          'goals':                'Goals',
+          'time_preference':      'Time Preference',
+          'referral':             'Referral',
+          'transition':           'Transition',
+          'summary':              'Summary',
+          'testimonials':         'Testimonials',
+          'trial_step1':          'Trial Step 1',
+          'trial_step2':          'Trial Step 2',
+          'paywall':              'Paywall',
+          'special-offer':        'Special Offer',
+          'special_offer':        'Special Offer',
+          'special_offer_screen': 'Special Offer',
         };
         return labels[name] ?? name.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
       };
 
       return (
+        <>
         <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
           <Paper sx={{ backgroundColor: '#2a2a2a', p: 4, borderRadius: 2 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1, flexWrap: 'wrap', gap: 2 }}>
@@ -3746,7 +3809,7 @@ const Dashboard = () => {
                   Onboarding Funnel
                 </Typography>
                 <Typography variant="body2" sx={{ color: '#888888', mt: 0.5 }}>
-                  testimonials → trial_step1 → trial_step2 → paywall → special-offer · unique sessions, deduplicated by session_id
+                  All steps from the database · ordered by session position · deduplicated by device_id
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
@@ -3799,6 +3862,29 @@ const Dashboard = () => {
                   }
                 </IconButton>
 
+                {/* Wipe data button */}
+                <Button
+                  size="small"
+                  startIcon={<DeleteIcon sx={{ fontSize: '14px' }} />}
+                  disabled={useSandboxData}
+                  onClick={() => { setWipeError(null); setWipeDialogOpen(true); }}
+                  sx={{
+                    height: '36px',
+                    fontSize: '0.75rem',
+                    fontWeight: 'bold',
+                    textTransform: 'none',
+                    px: 1.5,
+                    color: '#ff5252',
+                    border: '1px solid #3a1a1a',
+                    borderRadius: '8px',
+                    backgroundColor: 'transparent',
+                    '&:hover': { backgroundColor: '#3a1a1a', borderColor: '#ff5252' },
+                    '&.Mui-disabled': { color: '#444', borderColor: '#2a2a2a' },
+                  }}
+                >
+                  Wipe
+                </Button>
+
                 <FormControlLabel
                   control={
                     <Switch
@@ -3828,131 +3914,260 @@ const Dashboard = () => {
 
             {!useSandboxData && (
               <Alert severity="info" sx={{ mb: 3, mt: 2, backgroundColor: '#1a1a1a', color: '#888888', border: '1px solid #3a3a3a' }}>
-                <strong>Note:</strong> Counts are deduplicated by <em>session_id</em> — back-navigation won't inflate numbers. "Sessions Passed" reflects unique sessions that completed each step.
+                <strong>Note:</strong> Counts are deduplicated by <em>device_id</em> — each install is counted once regardless of how many sessions they start. Conv.&nbsp;% is blank when the app does not fire a <em>step_completed</em> event for that screen.
               </Alert>
             )}
 
             {isLoading ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 5 }}>
                 <CircularProgress size={30} sx={{ color: '#A9E5BB' }} />
               </Box>
-            ) : isEmpty ? (
-              <Box sx={{ textAlign: 'center', py: 4, color: '#cccccc' }}>
-                No onboarding analytics data found
-              </Box>
             ) : (
-              <TableContainer>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ color: '#888888', fontWeight: 'bold', borderBottom: '1px solid #444', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em', width: '22%' }}>
-                        Step
-                      </TableCell>
-                      <TableCell sx={{ color: '#888888', fontWeight: 'bold', borderBottom: '1px solid #444', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em', width: '30%' }}>
-                        Funnel
-                      </TableCell>
-                      <TableCell sx={{ color: '#888888', fontWeight: 'bold', borderBottom: '1px solid #444', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em' }} align="right">
-                        Sessions Passed
-                      </TableCell>
-                      <TableCell sx={{ color: '#888888', fontWeight: 'bold', borderBottom: '1px solid #444', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em' }} align="right">
-                        of Total
-                      </TableCell>
-                      <TableCell sx={{ color: '#888888', fontWeight: 'bold', borderBottom: '1px solid #444', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em' }} align="right">
-                        Drop-off
-                      </TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {displayData.map((step, index) => {
-                      const dropoff = step.step_dropoff;
-                      const isBigDrop = dropoff !== null && dropoff > 20;
-                      const isMedDrop = dropoff !== null && dropoff >= 10 && dropoff <= 20;
-                      const barWidth = maxCompletions > 0 ? (step.completions / maxCompletions) * 100 : 0;
-                      const funnelColor = barWidth > 60 ? '#4caf50' : barWidth > 30 ? '#ff9800' : '#ff5252';
+              <Box>
+                {/* ── Step-by-step funnel list ── */}
+                {displayData.map((step, index) => {
+                  const hasViews = step.views > 0;
+                  const hasCompletions = step.completions > 0;
+                  const isPaywall = isPaywallName(step.step_name);
+                  const isOffer   = isOfferName(step.step_name);
+                  const isMoneyStep = isPaywall || isOffer;
+                  const accentColor = isPaywall ? '#F5C518' : '#A9E5BB';
+                  const prevStep = index > 0 ? displayData[index - 1] : null;
+                  const droppedDevices = prevStep && prevStep.views > step.views
+                    ? prevStep.views - step.views : 0;
+                  const droppedPct = prevStep && prevStep.views > 0 && droppedDevices > 0
+                    ? (droppedDevices / prevStep.views * 100) : 0;
+                  const isBigDrop = droppedPct >= 20;
+                  const isMedDrop = droppedPct >= 10 && droppedPct < 20;
+                  const isLastStep = index === displayData.length - 1;
 
-                      return (
-                        <TableRow key={step.step_name} sx={{ '&:hover': { backgroundColor: '#333333' } }}>
-                          <TableCell sx={{ color: '#ffffff', borderBottom: '1px solid #2a2a2a', py: 1.5 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Typography sx={{ color: '#555', fontSize: '0.75rem', minWidth: '18px' }}>
-                                {index + 1}
-                              </Typography>
-                              <Typography sx={{ fontSize: '0.875rem' }}>
-                                {formatStepName(step.step_name)}
-                              </Typography>
-                            </Box>
-                          </TableCell>
-                          <TableCell sx={{ borderBottom: '1px solid #2a2a2a', py: 1.5, pr: 3 }}>
-                            <Box sx={{ position: 'relative', height: '8px', backgroundColor: '#1a1a1a', borderRadius: '4px', overflow: 'hidden' }}>
-                              <Box
-                                sx={{
-                                  position: 'absolute',
-                                  left: 0,
-                                  top: 0,
-                                  height: '100%',
-                                  width: `${barWidth}%`,
-                                  backgroundColor: funnelColor,
-                                  borderRadius: '4px',
-                                  transition: 'width 0.4s ease',
-                                  opacity: 0.85,
-                                }}
-                              />
-                            </Box>
-                          </TableCell>
-                          <TableCell sx={{ color: '#ffffff', borderBottom: '1px solid #2a2a2a', py: 1.5, fontVariantNumeric: 'tabular-nums' }} align="right">
-                            {step.completions.toLocaleString()}
-                          </TableCell>
-                          <TableCell sx={{ borderBottom: '1px solid #2a2a2a', py: 1.5 }} align="right">
-                            <Typography
-                              sx={{
-                                color: step.funnel_pct >= 70 ? '#4caf50' : step.funnel_pct >= 40 ? '#ff9800' : '#ff5252',
-                                fontWeight: 'bold',
-                                fontSize: '0.875rem',
-                                fontVariantNumeric: 'tabular-nums',
-                              }}
-                            >
-                              {step.funnel_pct.toFixed(1)}%
+                  return (
+                    <Box key={step.step_name} sx={{ display: 'flex', gap: 0 }}>
+                      {/* Left rail: circle + line */}
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mr: 2, flexShrink: 0 }}>
+                        {/* Step circle */}
+                        <Box sx={{
+                          width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                          backgroundColor: !hasViews ? '#1a1a1a'
+                            : isPaywall ? '#2a2000'
+                            : isOffer   ? '#0c1f14'
+                            : '#1a2540',
+                          border: `2px solid ${!hasViews ? '#2a2a2a' : isMoneyStep ? accentColor + '60' : '#3d6fa840'}`,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: !hasViews ? '#333' : isMoneyStep ? accentColor : '#6090c8' }}>
+                            {index + 1}
+                          </Typography>
+                        </Box>
+                        {/* Connector line */}
+                        {!isLastStep && (
+                          <Box sx={{ width: '2px', flex: 1, minHeight: '32px', backgroundColor: '#242424', mt: '2px', mb: '2px' }} />
+                        )}
+                      </Box>
+
+                      {/* Right: step content + drop-off below */}
+                      <Box sx={{ flex: 1, pb: isLastStep ? 0 : 0.5 }}>
+                        {/* Step row */}
+                        <Box sx={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                          py: 0.5,
+                          borderRadius: '8px',
+                          opacity: hasViews ? 1 : 0.35,
+                        }}>
+                          {/* Step name + label */}
+                          <Box>
+                            <Typography sx={{
+                              fontSize: '0.95rem', fontWeight: isMoneyStep ? 600 : 400,
+                              color: hasViews ? (isMoneyStep ? accentColor : '#e0e0e0') : '#444',
+                            }}>
+                              {formatStepName(step.step_name)}
                             </Typography>
-                          </TableCell>
-                          <TableCell sx={{ borderBottom: '1px solid #2a2a2a', py: 1.5 }} align="right">
-                            {step.step_dropoff !== null ? (
-                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 }}>
-                                <Typography
-                                  sx={{
-                                    color: isBigDrop ? '#ff5252' : isMedDrop ? '#ff9800' : '#666666',
-                                    fontSize: '0.8rem',
-                                    fontVariantNumeric: 'tabular-nums',
-                                  }}
-                                >
-                                  {step.sessions_lost !== null && step.sessions_lost > 0 ? `−${step.sessions_lost.toLocaleString()}` : '—'}
-                                </Typography>
-                                {isBigDrop && (
-                                  <Chip
-                                    label={`↓ ${step.step_dropoff?.toFixed(0)}%`}
-                                    size="small"
-                                    sx={{
-                                      backgroundColor: '#3a1a1a',
-                                      color: '#ff5252',
-                                      fontSize: '0.7rem',
-                                      height: '20px',
-                                      border: '1px solid #ff525240',
-                                    }}
-                                  />
-                                )}
-                              </Box>
-                            ) : (
-                              <Typography sx={{ color: '#444', fontSize: '0.8rem' }}>—</Typography>
+                            {isPaywall && <Typography sx={{ fontSize: '0.65rem', color: '#b8940f99', textTransform: 'uppercase', letterSpacing: '0.07em' }}>paywall · purchase screen</Typography>}
+                            {isOffer   && <Typography sx={{ fontSize: '0.65rem', color: '#4d8f6499', textTransform: 'uppercase', letterSpacing: '0.07em' }}>special offer · purchase screen</Typography>}
+                            {!hasViews && <Typography sx={{ fontSize: '0.68rem', color: '#555', mt: '2px' }}>no events yet — see tracking note below</Typography>}
+                          </Box>
+
+                          {/* Count + funnel % */}
+                          <Box sx={{ textAlign: 'right', ml: 3 }}>
+                            <Typography sx={{ fontSize: '1.3rem', fontWeight: 700, color: '#ffffff', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
+                              {hasViews ? step.views.toLocaleString() : '—'}
+                            </Typography>
+                            {hasViews && (
+                              <Typography sx={{ fontSize: '0.7rem', color: '#555', mt: '2px', fontVariantNumeric: 'tabular-nums' }}>
+                                {index === 0 || !prevStep?.views ? 'entry point' : `${step.funnel_pct.toFixed(1)}% of funnel`}
+                              </Typography>
                             )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                          </Box>
+                        </Box>
+
+                        {/* Purchase / conversion row for money steps */}
+                        {isMoneyStep && hasViews && (
+                          <Box sx={{
+                            display: 'inline-flex', alignItems: 'center', gap: 1,
+                            mt: 0.75, mb: 0.5, px: 1.5, py: 0.75,
+                            backgroundColor: hasCompletions
+                              ? (isPaywall ? '#1f180033' : '#0c1f1433')
+                              : '#14141422',
+                            border: `1px solid ${hasCompletions ? accentColor + '25' : '#2a2a2a'}`,
+                            borderRadius: '8px',
+                          }}>
+                            <Typography sx={{ fontSize: '0.8rem' }}>💰</Typography>
+                            {hasCompletions ? (
+                              <>
+                                <Typography sx={{ fontSize: '0.9rem', fontWeight: 700, color: accentColor, fontVariantNumeric: 'tabular-nums' }}>
+                                  {step.completions.toLocaleString()}
+                                </Typography>
+                                <Typography sx={{ fontSize: '0.78rem', color: '#777' }}>
+                                  purchased · {(step.completions / step.views * 100).toFixed(1)}% purchase rate
+                                </Typography>
+                              </>
+                            ) : (
+                              <Typography sx={{ fontSize: '0.78rem', color: '#444' }}>
+                                no purchases tracked yet
+                              </Typography>
+                            )}
+                          </Box>
+                        )}
+
+                        {/* Drop-off to next step */}
+                        {!isLastStep && (
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5, mb: 1, pl: 0.25 }}>
+                            {droppedDevices > 0 ? (
+                              <Box sx={{
+                                display: 'inline-flex', alignItems: 'center', gap: 0.75,
+                                px: 1.25, py: '3px',
+                                backgroundColor: isBigDrop ? '#2a0a0a' : '#1e150044',
+                                border: `1px solid ${isBigDrop ? '#ff525230' : isMedDrop ? '#ff980030' : '#2a2a2a'}`,
+                                borderRadius: '20px',
+                              }}>
+                                <Typography sx={{ fontSize: '0.7rem', color: isBigDrop ? '#ff5252' : isMedDrop ? '#ff9800' : '#666', fontVariantNumeric: 'tabular-nums' }}>
+                                  ↑ {droppedDevices.toLocaleString()} left
+                                </Typography>
+                                <Typography sx={{ fontSize: '0.68rem', color: isBigDrop ? '#ff525288' : isMedDrop ? '#ff980088' : '#444' }}>
+                                  {droppedPct.toFixed(0)}% drop-off
+                                </Typography>
+                              </Box>
+                            ) : prevStep?.views > 0 && hasViews ? (
+                              <Typography sx={{ fontSize: '0.68rem', color: '#2e2e2e', pl: 0.5 }}>no drop-off</Typography>
+                            ) : null}
+                          </Box>
+                        )}
+                      </Box>
+                    </Box>
+                  );
+                })}
+
+                {/* ── Summary cards ── */}
+                <Box sx={{ mt: 3, pt: 3, borderTop: '1px solid #1e1e1e', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 1.5 }}>
+                  {([
+                    { label: 'Entered Funnel',    value: totalEntry > 0 ? totalEntry.toLocaleString() : '—',                        sub: 'unique devices',                                                                     color: '#888888' },
+                    { label: 'Hit Paywall',        value: paywallViews > 0 ? paywallViews.toLocaleString() : '—',                    sub: paywallReachRate > 0 ? `${paywallReachRate.toFixed(1)}% of entrants` : '—',         color: '#888888' },
+                    { label: 'Purchased',          value: purchases > 0 ? purchases.toLocaleString() : '—',                          sub: purchaseRate > 0 ? `${purchaseRate.toFixed(1)}% of paywall` : 'none tracked',       color: '#F5C518' },
+                    { label: 'Overall Conv. Rate', value: overallPurchaseRate > 0 ? `${overallPurchaseRate.toFixed(1)}%` : '—',       sub: 'purchases ÷ total entry',                                                         color: overallPurchaseRate >= 10 ? '#4caf50' : overallPurchaseRate > 0 ? '#ff9800' : '#444' },
+                    ...(offerViews > 0 ? [{ label: 'Special Offer Purchased', value: offerConversions > 0 ? offerConversions.toLocaleString() : '—', sub: offerConvRate > 0 ? `${offerConvRate.toFixed(1)}% of offer viewers` : 'no purchases tracked', color: '#A9E5BB' }] : []),
+                  ] as { label: string; value: string; sub: string; color: string }[]).map(stat => (
+                    <Box key={stat.label} sx={{ backgroundColor: '#181818', borderRadius: '10px', p: 2 }}>
+                      <Typography sx={{ fontSize: '0.62rem', color: '#444', textTransform: 'uppercase', letterSpacing: '0.09em', mb: 0.75 }}>
+                        {stat.label}
+                      </Typography>
+                      <Typography sx={{ fontSize: '1.5rem', fontWeight: 700, color: stat.color, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
+                        {stat.value}
+                      </Typography>
+                      <Typography sx={{ fontSize: '0.65rem', color: '#444', mt: 0.5 }}>
+                        {stat.sub}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
             )}
           </Paper>
         </Box>
+
+        {/* ── Wipe data confirmation dialog ── */}
+        <Dialog
+          open={wipeDialogOpen}
+          onClose={() => !isWiping && setWipeDialogOpen(false)}
+          PaperProps={{ sx: { backgroundColor: '#1e1e1e', border: '1px solid #3a1a1a', borderRadius: '12px', minWidth: '400px' } }}
+        >
+          <DialogTitle sx={{ color: '#ff5252', display: 'flex', alignItems: 'center', gap: 1.5, pb: 1 }}>
+            <DeleteIcon sx={{ fontSize: '20px' }} />
+            Delete Onboarding Events
+          </DialogTitle>
+          <DialogContent>
+            <Alert severity="error" sx={{ mb: 2.5, backgroundColor: '#2a0a0a', color: '#ff8a80', border: '1px solid #ff525230', '& .MuiAlert-icon': { color: '#ff5252' } }}>
+              This permanently deletes raw event rows from the <strong>onboarding_events</strong> table. This cannot be undone.
+            </Alert>
+            <Typography sx={{ color: '#aaaaaa', fontSize: '0.875rem', mb: 1.5 }}>
+              Choose which events to delete:
+            </Typography>
+            <FormControl fullWidth size="small">
+              <Select
+                value={wipePeriod}
+                onChange={(e) => setWipePeriod(e.target.value as any)}
+                disabled={isWiping}
+                sx={{
+                  backgroundColor: '#141414',
+                  color: '#ffffff',
+                  borderRadius: '8px',
+                  '& .MuiOutlinedInput-notchedOutline': { borderColor: '#3a3a3a' },
+                  '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#ff5252' },
+                  '& .MuiSvgIcon-root': { color: '#888' },
+                }}
+              >
+                <MenuItem value="7d">Last 7 days</MenuItem>
+                <MenuItem value="30d">Last 30 days</MenuItem>
+                <MenuItem value="90d">Last 90 days</MenuItem>
+                <MenuItem value="all" sx={{ color: '#ff5252', fontWeight: 'bold' }}>All time — delete everything</MenuItem>
+              </Select>
+            </FormControl>
+            {wipeError && (
+              <Typography sx={{ color: '#ff5252', fontSize: '0.8rem', mt: 1.5 }}>{wipeError}</Typography>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2.5, gap: 1 }}>
+            <Button
+              onClick={() => setWipeDialogOpen(false)}
+              disabled={isWiping}
+              sx={{ color: '#888888', textTransform: 'none', '&:hover': { color: '#ffffff' } }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              disabled={isWiping}
+              onClick={async () => {
+                setIsWiping(true);
+                setWipeError(null);
+                const { error } = await deleteOnboardingEvents(wipePeriod);
+                setIsWiping(false);
+                if (error) {
+                  setWipeError('Delete failed — check console for details.');
+                  console.error('Wipe error:', error);
+                } else {
+                  setWipeDialogOpen(false);
+                  await fetchOnboardingAnalytics(onboardingDateRange);
+                }
+              }}
+              sx={{
+                backgroundColor: '#ff5252',
+                color: '#ffffff',
+                fontWeight: 'bold',
+                textTransform: 'none',
+                borderRadius: '8px',
+                px: 2.5,
+                '&:hover': { backgroundColor: '#d32f2f' },
+                '&.Mui-disabled': { backgroundColor: '#3a1a1a', color: '#666' },
+              }}
+            >
+              {isWiping
+                ? <CircularProgress size={16} sx={{ color: '#ffffff' }} />
+                : `Delete ${wipePeriod === 'all' ? 'all events' : `last ${wipePeriod}`}`
+              }
+            </Button>
+          </DialogActions>
+        </Dialog>
+        </>
       );
     };
 
