@@ -143,8 +143,10 @@ Rules:
 - Use common real first names — mix of male and female
 - Numbers should look natural (birth years 94-05, or short numbers 2-99)
 - All lowercase, underscores OK, NO dots, NO hyphens
-- Keep them short: 5-13 characters max
-- BANNED: anything like "name_withword", "namevibes", "namecooks", "namewithcoffee" — no nouns glued to names
+- Length: MINIMUM 5 characters, MAXIMUM 12 characters — strictly enforced
+- BANNED words (do not use these as or inside usernames): admin, administrator, root, superuser, moderator, mod, support, help, service, system, bot, api, momu, official, staff, team, user, guest, anonymous, null, undefined, test, demo, sample, example
+- BANNED formats: anything like "name_withword", "namevibes", "namecooks", "namewithcoffee" — no nouns glued to names
+- No profanity of any kind
 - Should look indistinguishable from real user accounts
 
 Return EXACTLY 20 usernames, one per line. Nothing else.`
@@ -183,10 +185,19 @@ async function initializePersonaPool(supabase: any, apiKey: string): Promise<voi
 
   console.log('Initializing persona pool...')
   const usernamesText = await callClaudeHaiku(PERSONA_GENERATION_PROMPT, apiKey, 300)
-  const usernames = usernamesText.split('\n').filter((u: string) => u.trim().length > 0).slice(0, 20)
+  const usernames = usernamesText
+    .split('\n')
+    .map((u: string) => u.trim().toLowerCase())
+    .filter((u: string) => isValidUsername(u))
+    .slice(0, 20)
+
+  if (usernames.length === 0) {
+    console.warn('Claude returned no valid usernames — falling back to pool')
+    return
+  }
 
   const personas = usernames.map((username: string) => ({
-    username: username.trim(),
+    username,
     avatar_color: weightedRandomColor(),
     personality_note: null
   }))
@@ -214,6 +225,15 @@ async function initializePersonaPool(supabase: any, apiKey: string): Promise<voi
   }
 
   console.log(`Created ${personas.length} personas`)
+}
+
+// Validates a username against the same rules the app enforces
+const RESERVED_WORDS = new Set(['admin','administrator','root','superuser','moderator','mod','support','help','service','system','bot','api','momu','official','staff','team','user','guest','anonymous','null','undefined','test','demo','sample','example'])
+function isValidUsername(u: string): boolean {
+  if (!u || u.length < 5 || u.length > 12) return false
+  if (!/^[a-zA-Z0-9_]+$/.test(u)) return false
+  if (RESERVED_WORDS.has(u.toLowerCase())) return false
+  return true
 }
 
 let _realUsernameCache: Set<string> | null = null
